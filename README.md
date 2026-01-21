@@ -57,7 +57,7 @@ gamecore
 
 ## Repository Structure and Mirroring
 
-This project is developed in a **private internal repository** on KI'Ts Gitlab
+This project is developed in a **private internal repository** on KIT's Gitlab
 within the Cooperative Systems research group.
 
 A (read-only) **public mirror** is maintained on Github for released versions to allow
@@ -73,7 +73,7 @@ should follow the workflow described below.
 ### 1. Cloning the Repository
 
 Development takes place in the internal repository. 
-To work on `gamecore`, first clone the internal repository locally::
+To work on `gamecore`, first clone the internal repository locally:
 
 ```bash
 git clone git@gitlab.kit.edu/kit/irs/rus/ks/gamecore.git
@@ -102,7 +102,7 @@ Push your branch to GitLab:
 ```bash
 git push origin feature/<short-description>
 ```
-Then open a Merge Request (Pull Request) against `main`.
+Then open a Merge Request (Pull Request) against `main` on Gitlab.
 
 ### 5. Merging and Versioning
 After a Merge Request is approved and merged into `main`,
@@ -111,6 +111,7 @@ We follow a semantic versioning scheme:
 - PATCH (0.1.x) — bug fixes, no API changes
 - MINOR (0.x.0) — new features, backwards compatible
 - MAJOR (x.0.0) — breaking API changes
+
 Create a new version based on the udpated main with:
 ```bash
 git checkout main
