@@ -2,18 +2,25 @@
 
 ## Description
 A Python-based library for simulating Differential and Dynamic Games.
-This package builds a shared core library of the research group "Cooperative Systems" at the Institute of Control Systems (IRS), Karlsruhe Institute of Technology (KIT).
+This package builds a shared core library of the "Cooperative Systems" research group at the Institute of Control Systems (IRS), Karlsruhe Institute of Technology (KIT), Germany.
 
 ## Installation
-Install this package with 
+
+`gamecore` is distributed via a **public mirror repository**.
+Install a specific released version with:
 ```bash
-pip install gamecore @ git+https://https://gitlab.kit.edu/kit/irs/rus/ks/gamecore.git@v0.1.0
+pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.0"
 ```
-and change the version number as required.
+Always use a tagged version for reproducibility.
 
 ## Usage
 ### Getting Started
 You can get to know this codebase with the tutorial notebooks in `notebooks/tutorials/`.
+
+To use the package in your code, simply:
+```python
+import gamecore
+```
 
 ## Overall Project Structure
 
@@ -48,7 +55,16 @@ gamecore
     └── Logger               # Data-Logging
 ```
 
-## Development Workflow
+## Repository Structure and Mirroring
+
+This project is developed in a **private internal repository** on KI'Ts Gitlab
+within the Cooperative Systems research group.
+
+A (read-only) **public mirror** is maintained on Github for released versions to allow
+easy installation, reproducibility, and external use.
+
+
+## Development Workflow (Internal Development)
 
 This repository is intended to be a **shared and stable core library**.
 To ensure consistency, reproducibility, and a clean API, changes to the codebase
@@ -56,12 +72,14 @@ should follow the workflow described below.
 
 ### 1. Cloning the Repository
 
-To work on `gamecore`, first clone the repository locally:
+Development takes place in the internal repository. 
+To work on `gamecore`, first clone the internal repository locally::
 
 ```bash
-git clone git@gitlab.com:your-group/gamecore.git
+git clone git@gitlab.kit.edu/kit/irs/rus/ks/gamecore.git
 cd gamecore
 ```
+The public repository is a mirror and should not be used for development.
 
 ### 2. Creating a Feature/Bugfix Branch
 All changes should be made on a separate branch.
@@ -99,6 +117,11 @@ git checkout main
 git pull
 git tag vx.x.x
 git push origin vx.x.x
+```
+To also update the mirror repository on Github:
+```bash
+git push public main
+git push public --tags
 ```
 Only tagged versions should be used as dependencies in downstream projects.
 
