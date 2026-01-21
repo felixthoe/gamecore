@@ -102,12 +102,6 @@ git push origin vx.x.x
 ```
 Only tagged versions should be used as dependencies in downstream projects.
 
-### 6. Using a Specific Version in Other Projects
-Downstream projects should always depend on a tagged version of `gamecore`
-to ensure full reproducibility.
-When using mamba (or conda), add `gamecore` as a pip dependency inside your
-environment specification file (e.g. `environment.yml`):
-
 ## Support
 For help and support don't hesitate to contact me:\
 Felix Thömmes\
