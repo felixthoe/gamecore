@@ -9,7 +9,7 @@ This package builds a shared core library of the "Cooperative Systems" research 
 `gamecore` is distributed via a **public mirror repository**.
 Install a specific released version with:
 ```bash
-pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.0"
+pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.1"
 ```
 Always use a tagged version for reproducibility.
 
