@@ -10,8 +10,8 @@ def make_random_lq_players(
     game_type: str = "differential",
     learning_rate: float | list[float] = 1.0,
     cost_q_i_def: str = "pd",
-    cost_r_i_jj: str = "free",
-    cost_r_i_jk: str = "zero",
+    cost_r_ijj: str = "free",
+    cost_r_ijk: str = "zero",
     cost_enforce_psd_r_i: bool = True,
     cost_sparsity: float = 0.0,
     cost_amplitude: float = 10.0,
@@ -34,10 +34,10 @@ def make_random_lq_players(
         a list will be distributed per player. The list has to match the number of players in the system.
     cost_q_i_def : str
         Definiteness of the Q matrices. Either "pd" (positive definite) or "psd" (positive semi-definite).
-    cost_r_i_jj : str
+    cost_r_ijj : str
         Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
         "psd" for positive semidefinite, or "free" for arbitrary matrices. 
-    cost_r_i_jk : str
+    cost_r_ijk : str
         Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
         or "free" for arbitrary matrices. 
     cost_enforce_psd_r_i : bool
@@ -83,8 +83,8 @@ def make_random_lq_players(
     costs = make_random_costs(
         system=system,
         q_i_def=cost_q_i_def,
-        r_i_jj=cost_r_i_jj,
-        r_i_jk=cost_r_i_jk,
+        r_ijj=cost_r_ijj,
+        r_ijk=cost_r_ijk,
         enforce_psd_r_i=cost_enforce_psd_r_i,
         sparsity=cost_sparsity,
         amplitude=cost_amplitude,

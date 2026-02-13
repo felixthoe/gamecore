@@ -35,21 +35,21 @@ def dynamic_system() -> LinearSystem:
 
 @pytest.mark.parametrize("game_type", ["differential", "dynamic"])
 @pytest.mark.parametrize("q_i_def", ["pd", "psd"])
-@pytest.mark.parametrize("r_i_jj", ["zero", "psd", "free"])
-@pytest.mark.parametrize("r_i_jk", ["zero", "free"])
+@pytest.mark.parametrize("r_ijj", ["zero", "psd", "free"])
+@pytest.mark.parametrize("r_ijk", ["zero", "free"])
 @pytest.mark.parametrize("enforce_psd_r_i", [True, False])
 def test_make_random_lq_players(
     differential_system: LinearSystem, 
     dynamic_system: LinearSystem,
     game_type: str,
     q_i_def: str,
-    r_i_jj: str,
-    r_i_jk: str,
+    r_ijj: str,
+    r_ijk: str,
     enforce_psd_r_i: bool,
 ) -> None:
     # exclude invalid combinations
-    if r_i_jk == "free" and r_i_jj == "zero" and enforce_psd_r_i:
-        pytest.skip("Invalid combination of r_i_jj, r_i_jk, and enforce_psd_r_i")
+    if r_ijk == "free" and r_ijj == "zero" and enforce_psd_r_i:
+        pytest.skip("Invalid combination of r_ijj, r_ijk, and enforce_psd_r_i")
     if game_type == "differential":
         system = differential_system
     else:
@@ -58,8 +58,8 @@ def test_make_random_lq_players(
         game_type=game_type,
         system=system,
         cost_q_i_def=q_i_def,
-        cost_r_i_jj=r_i_jj,
-        cost_r_i_jk=r_i_jk,
+        cost_r_ijj=r_ijj,
+        cost_r_ijk=r_ijk,
         cost_enforce_psd_r_i=enforce_psd_r_i,
         seed=SEED,
     )
