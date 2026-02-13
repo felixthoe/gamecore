@@ -25,23 +25,26 @@ def system() -> LinearSystem:
 # Tests
 ################################
 
-@pytest.mark.parametrize("q_def", ["pd", "psd"])
-@pytest.mark.parametrize("r_jj", ["zero", "psd", "free"])
-@pytest.mark.parametrize("r_jk", ["zero", "free"])
+@pytest.mark.parametrize("q_i_def", ["pd", "psd"])
+@pytest.mark.parametrize("r_i_jj", ["zero", "psd", "free"])
+@pytest.mark.parametrize("r_i_jk", ["zero", "free"])
+@pytest.mark.parametrize("enforce_psd_r_i", [True, False])
 def test_make_random_costs(
     system: LinearSystem,
-    q_def: str,
-    r_jj: str,
-    r_jk: str
+    q_i_def: str,
+    r_i_jj: str,
+    r_i_jk: str,
+    enforce_psd_r_i: bool
 ) -> None:
     # exclude invalid combinations
-    if r_jk == "free" and r_jj == "zero":
-        pytest.skip("Invalid combination of r_jj and r_jk")
+    if r_i_jk == "free" and r_i_jj == "zero" and enforce_psd_r_i:
+        pytest.skip("Invalid combination of r_i_jj, r_i_jk, and enforce_psd_r_i")
     costs = make_random_costs(
         system=system,
-        q_def=q_def,
-        r_jj=r_jj,
-        r_jk=r_jk,
+        q_i_def=q_i_def,
+        r_i_jj=r_i_jj,
+        r_i_jk=r_i_jk,
+        enforce_psd_r_i=enforce_psd_r_i,
         seed=SEED,
         sparsity=0.1,
     )

@@ -9,9 +9,10 @@ def make_random_lq_players(
     system: LinearSystem,
     game_type: str = "differential",
     learning_rate: float | list[float] = 1.0,
-    cost_q_def: str = "pd",
-    cost_r_jj: str = "free",
-    cost_r_jk: str = "zero",
+    cost_q_i_def: str = "pd",
+    cost_r_i_jj: str = "free",
+    cost_r_i_jk: str = "zero",
+    cost_enforce_psd_r_i: bool = True,
     cost_sparsity: float = 0.0,
     cost_amplitude: float = 10.0,
     cost_diag: bool = True,
@@ -31,15 +32,16 @@ def make_random_lq_players(
     learning_rate : float | list[float]
         Learning rate for strategy updates. A single value will be broadcasted to all players,
         a list will be distributed per player. The list has to match the number of players in the system.
-    cost_q_def : str
+    cost_q_i_def : str
         Definiteness of the Q matrices. Either "pd" (positive definite) or "psd" (positive semi-definite).
-    cost_r_jj : str
+    cost_r_i_jj : str
         Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
         "psd" for positive semidefinite, or "free" for arbitrary matrices. 
-    cost_r_jk : str
+    cost_r_i_jk : str
         Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
         or "free" for arbitrary matrices. 
-        "free" requires cost_r_jj in {"free", "psd"} to be valid.
+    cost_enforce_psd_r_i : bool
+        If True, adjust the generated R_i matrices to ensure they are positive semidefinite.
     cost_sparsity : float
         Fraction of zero entries to introduce in the cost matrices.
     cost_amplitude : float
@@ -80,9 +82,10 @@ def make_random_lq_players(
     # Generate random costs
     costs = make_random_costs(
         system=system,
-        q_def=cost_q_def,
-        r_jj=cost_r_jj,
-        r_jk=cost_r_jk,
+        q_i_def=cost_q_i_def,
+        r_i_jj=cost_r_i_jj,
+        r_i_jk=cost_r_i_jk,
+        enforce_psd_r_i=cost_enforce_psd_r_i,
         sparsity=cost_sparsity,
         amplitude=cost_amplitude,
         diag=cost_diag,
