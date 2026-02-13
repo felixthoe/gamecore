@@ -1,12 +1,16 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=61", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gamecore"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Core abstractions for dynamic and differential games"
-authors = [{name = "Felix Thömmes"}]
+authors = [
+    { name = "Felix Thömmes", email = "felix.thoemmes@kit.edu" },
+    { name = "Karl Handwerker", email = "karl.handwerker@kit.edu" },
+    { name = "Lucas Günther", email = "lucas.guenther@kit.edu" },
+]
 requires-python = ">=3.12"
 dependencies = [
     "numpy",
@@ -14,6 +18,10 @@ dependencies = [
     "sympy",
     "tqdm",
 ]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -14,8 +14,8 @@ def make_random_lq_game(
     system_amplitude: float = 1.0,
     system_max_iter: int = 10000,
     cost_q_i_def: str = "pd",
-    cost_r_i_jj: str = "free",
-    cost_r_i_jk: str = "zero",
+    cost_r_ijj: str = "free",
+    cost_r_ijk: str = "zero",
     cost_enforce_psd_r_i: bool = True,
     cost_sparsity: float = 0.0,
     cost_amplitude: float = 10.0,
@@ -51,10 +51,10 @@ def make_random_lq_game(
         Maximum attempts to find a stabilizable system.
     cost_q_i_def : str
         Definiteness of the Q matrices. Either "pd" (positive definite) or "psd" (positive semi-definite).
-    cost_r_i_jj : str
+    cost_r_ijj : str
         Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
         "psd" for positive semidefinite, or "free" for arbitrary matrices. 
-    cost_r_i_jk : str
+    cost_r_ijk : str
         Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
         or "free" for arbitrary matrices.
     cost_enforce_psd_r_i : bool
@@ -99,8 +99,8 @@ def make_random_lq_game(
         game_type=game_type,
         learning_rate=learning_rate,
         cost_q_i_def=cost_q_i_def,
-        cost_r_i_jj=cost_r_i_jj,
-        cost_r_i_jk=cost_r_i_jk,
+        cost_r_ijj=cost_r_ijj,
+        cost_r_ijk=cost_r_ijk,
         cost_enforce_psd_r_i=cost_enforce_psd_r_i,
         cost_sparsity=cost_sparsity,
         cost_amplitude=cost_amplitude,
