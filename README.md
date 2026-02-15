@@ -13,7 +13,7 @@ pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git"
 ```
 Or, install a specific released version with, e.g.:
 ```bash
-pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.2"
+pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.4"
 ```
 We recommend to always use a tagged version for reproducibility.
 
@@ -123,7 +123,7 @@ git pull
 git tag vx.x.x
 git push origin vx.x.x
 ```
-The mirror repository on Github gets upated automatically.
+The mirror repository on Github gets updated automatically.
 
 ## Support
 For help and support don't hesitate to contact me:\
