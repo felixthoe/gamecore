@@ -9,7 +9,7 @@ def make_random_lq_players(
     system: LinearSystem,
     game_type: str = "differential",
     learning_rate: float | list[float] = 1.0,
-    cost_q_i_def: str = "pd",
+    cost_q_i: str = "pd",
     cost_r_ijj: str = "free",
     cost_r_ijk: str = "zero",
     cost_enforce_psd_r_i: bool = True,
@@ -32,7 +32,7 @@ def make_random_lq_players(
     learning_rate : float | list[float]
         Learning rate for strategy updates. A single value will be broadcasted to all players,
         a list will be distributed per player. The list has to match the number of players in the system.
-    cost_q_i_def : str
+    cost_q_i : str
         Definiteness of the Q matrices. Either "pd" (positive definite) or "psd" (positive semi-definite).
     cost_r_ijj : str
         Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
@@ -43,7 +43,7 @@ def make_random_lq_players(
     cost_enforce_psd_r_i : bool
         If True, adjust the generated R_i matrices to ensure they are positive semidefinite.
     cost_sparsity : float
-        Fraction of zero entries to introduce in the cost matrices.
+        Fraction of zero entries to introduce in the cost matrices. Not applied to those defined positive definite.
     cost_amplitude : float
         Amplitude for the random entries in the cost matrices.
     cost_diag : bool
@@ -82,7 +82,7 @@ def make_random_lq_players(
     # Generate random costs
     costs = make_random_costs(
         system=system,
-        q_i_def=cost_q_i_def,
+        q_i=cost_q_i,
         r_ijj=cost_r_ijj,
         r_ijk=cost_r_ijk,
         enforce_psd_r_i=cost_enforce_psd_r_i,

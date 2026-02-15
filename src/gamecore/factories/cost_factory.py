@@ -14,7 +14,7 @@ from ..utils.utils import (
 
 def make_random_costs(
     system: LinearSystem,
-    q_i_def: str = "pd",
+    q_i: str = "pd",
     r_ijj: str = "free",             # Diagonal terms u[j].T R_i,jj u[j]
     r_ijk: str = "zero",             # Cross terms j≠k u[j].T R_i,jk u[k]
     enforce_psd_r_i: bool = True,    # Enforce positive semidefiniteness of overall block matrix R_i
@@ -31,7 +31,7 @@ def make_random_costs(
     ----------
     system : LinearSystem
         The system on which the game is defined.        
-    q_i_def : str
+    q_i : str
         Definiteness of the Q_i matrices. Either "pd" for positive definite,
         or "psd" for positive semidefinite.
         "pd" sufficiently ensures that (A, Q_i^{1/2}) is detectable for each player i.
@@ -47,7 +47,7 @@ def make_random_costs(
     enforce_psd_r_i : bool
         If True, adjust the generated R_i matrices to ensure they are positive semidefinite.
     sparsity : float
-        Fraction of zero entries to introduce in the cost matrices.
+        Fraction of zero entries to introduce in the cost matrices. Not applied to those defined positive definite.
     amplitude : float
         Amplitude for the random entries in the cost matrices.
     diag : bool
@@ -68,9 +68,9 @@ def make_random_costs(
     N = system.N
 
     # 1. Q_i
-    if q_i_def == "pd":
-        Qs = [random_PD_matrix(n=n, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng) for _ in range(N)]
-    elif q_i_def == "psd":
+    if q_i == "pd":
+        Qs = [random_PD_matrix(n=n, diag=diag, sparsity=0, amplitude=amplitude, rng=rng) for _ in range(N)]
+    elif q_i == "psd":
         Qs = []
         for i in range(N):
             while True:
@@ -80,10 +80,10 @@ def make_random_costs(
                     Qs.append(Q_i)
                     break
     else:
-        raise ValueError(f"Cost Factory: Unknown value for q_i_def '{q_i_def}'. Use 'pd' or 'psd'.")
+        raise ValueError(f"Cost Factory: Unknown value for q_i '{q_i}'. Use 'pd' or 'psd'.")
 
     # 2. R_i,ii (always PD)
-    Rs_iii = [random_PD_matrix(n=m_i, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng) for m_i in ms]
+    Rs_iii = [random_PD_matrix(n=m_i, diag=diag, sparsity=0, amplitude=amplitude, rng=rng) for m_i in ms]
     Rs = [{(i, i): R_iii} for i, R_iii in enumerate(Rs_iii)]
 
     # 3. R_i,jj
