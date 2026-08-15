@@ -7,7 +7,7 @@ from scipy.integrate import solve_ivp
 from .strategy.linear_strategy import LinearStrategy
 from .game.lq_game import LQGame
 
-def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrategy] | None = None, max_iteration: int = 1000, T: float = 1e7, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
+def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrategy] | None = None, finite_horizon_fallback: bool = False, max_iteration: int = 1000, T: float = 1e7, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players using different algorithms.
     If the cascaded value iteration fails, it falls back to a cascaded policy iteration.
@@ -20,6 +20,9 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
     initial_strategies : list[LinearStrategy], optional
         Initial strategies for the iterative solution scheme.
         If None, uses the current strategies of the game.
+    finite_horizon_fallback : bool, optional
+        If True, allows fallback to CDRE-based finite horizon simulation if both cascaded value and
+        policy iterations fail. Default is False (it often takes forever and fails anyway).
     max_iteration : int, optional
         Maximum number of iterations for convergence of the iterative solution scheme. Default is 1000.
     T : float, optional
@@ -65,16 +68,19 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
             )
         except (RuntimeError, ValueError) as f:
             print(f"Nash Solver: Value iteration failed due to: {f}")
-            print("Falling back to CDRE-based finite horizon simulation...")
-            try:
-                return _cdre_finite_horizon_simulation(
-                    game=game,
-                    T=T,
-                    atol=atol
-                )
-            except (RuntimeError, ValueError) as g:
-                print(f"Nash Solver: CDRE finite horizon simulation failed due to: {g}")
-                raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies have failed.")
+            if not finite_horizon_fallback:
+                raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies (finite horizon excluded per argument) have failed.")
+            else:
+                print("Falling back to CDRE-based finite horizon simulation...")
+                try:
+                    return _cdre_finite_horizon_simulation(
+                        game=game,
+                        T=T,
+                        atol=atol
+                    )
+                except (RuntimeError, ValueError) as g:
+                    print(f"Nash Solver: CDRE finite horizon simulation failed due to: {g}")
+                    raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies have failed.")
 
     
 def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], cascaded: bool = False, max_iteration: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:

@@ -88,7 +88,7 @@ class BasePlayer(ABC):
         """
         return self.__class__(
             strategy=self.strategy.copy(),
-            cost=self.cost,
+            cost=self.cost.copy(),
             player_idx=self.player_idx,
             learning_rate=self.learning_rate
         )

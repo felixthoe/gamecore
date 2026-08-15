@@ -8,7 +8,7 @@ from ..utils.utils import is_stabilizable, sparsify
 def make_random_system(
     n: int,
     ms: list[int],
-    stabilizability: str = "individual",
+    stabilizability: str = "joint",
     game_type: str = "differential",
     sparsity: float = 0.0,
     amplitude: float = 1.0,

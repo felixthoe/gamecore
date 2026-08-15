@@ -162,5 +162,5 @@ def test_feedback_nash_equilibrium_fallback_chain_ct(monkeypatch, lqgame_ct: LQG
     monkeypatch.setattr("src.gamecore.solver._policy_iteration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail cascade")), raising=True)
     monkeypatch.setattr("src.gamecore.solver._care_value_iteration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail care")), raising=True)
     monkeypatch.setattr("src.gamecore.solver._cdre_finite_horizon_simulation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail cdre")), raising=True)
-    with pytest.raises(RuntimeError, match="All available methods to compute feedback Nash strategies have failed"):
+    with pytest.raises(RuntimeError, match="All available methods"):
         feedback_nash_equilibrium(lqgame_ct)

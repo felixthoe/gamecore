@@ -9,7 +9,7 @@ def make_random_lq_game(
     ms: list[int] = [1, 1],
     game_type: str = "differential",
     learning_rate: float | list[float] = 1.0,
-    system_stabilizability: str = "individual",
+    system_stabilizability: str = "joint",
     system_sparsity: float = 0.0,
     system_amplitude: float = 1.0,
     system_max_iter: int = 10000,
