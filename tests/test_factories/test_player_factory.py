@@ -33,15 +33,15 @@ def dynamic_system() -> LinearSystem:
 # Tests
 ################################
 
-@pytest.mark.parametrize("game_type", ["differential", "dynamic"])
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
 @pytest.mark.parametrize("q_i", ["pd", "psd"])
 @pytest.mark.parametrize("r_ijj", ["zero", "psd", "free"])
 @pytest.mark.parametrize("r_ijk", ["zero", "free"])
 @pytest.mark.parametrize("enforce_psd_r_i", [True, False])
 def test_make_random_lq_players(
-    differential_system: LinearSystem, 
+    differential_system: LinearSystem,
     dynamic_system: LinearSystem,
-    game_type: str,
+    time_domain: str,
     q_i: str,
     r_ijj: str,
     r_ijk: str,
@@ -50,12 +50,12 @@ def test_make_random_lq_players(
     # exclude invalid combinations
     if r_ijk == "free" and r_ijj == "zero" and enforce_psd_r_i:
         pytest.skip("Invalid combination of r_ijj, r_ijk, and enforce_psd_r_i")
-    if game_type == "differential":
+    if time_domain == "continuous":
         system = differential_system
     else:
         system = dynamic_system
     players = make_random_lq_players(
-        game_type=game_type,
+        time_domain=time_domain,
         system=system,
         cost_q_i=q_i,
         cost_r_ijj=r_ijj,

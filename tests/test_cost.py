@@ -101,18 +101,18 @@ def test_evaluate_differential_matches_expected(system_trajectory: SystemTraject
     # sum_k( state + control ) = sum_k(11k^2 + 3)
     # k=0..3 -> sum 11*(0+1+4+9) + 3*4 = 11*14 + 12 = 166
     # differential -> * dt (dt=1) = 166
-    val = cost.evaluate_system_trajectory(traj, game_type="differential")
+    val = cost.evaluate_system_trajectory(traj, time_domain="continuous")
     assert np.isclose(val, 166.0)
 
 def test_evaluate_dynamic_matches_expected(system_trajectory: SystemTrajectory, Q_good: np.ndarray, R_good: dict[int, np.ndarray]):
     cost = QuadraticCost(Q=Q_good, R=R_good)
     # dynamic: same sum without dt multiplication (but dt=1 here, so still 166)
-    assert np.isclose(cost.evaluate_system_trajectory(system_trajectory, game_type="dynamic"), 166.0)
+    assert np.isclose(cost.evaluate_system_trajectory(system_trajectory, time_domain="discrete"), 166.0)
 
 def test_evaluate_invalid_game_type_raises(system_trajectory: SystemTrajectory, Q_good: np.ndarray, R_good: dict[int, np.ndarray]):
     cost = QuadraticCost(Q=Q_good, R=R_good)
-    with pytest.raises(ValueError, match="Game type must be either 'differential' or 'dynamic'"):
-        _ = cost.evaluate_system_trajectory(system_trajectory, game_type="invalid")
+    with pytest.raises(ValueError, match="time_domain must be 'continuous', 'discrete', or a TimeDomain"):
+        _ = cost.evaluate_system_trajectory(system_trajectory, time_domain="invalid")
 
 def test_evaluate_wrong_Q_dimension_raises(system_trajectory: SystemTrajectory):
     traj = system_trajectory
@@ -120,7 +120,7 @@ def test_evaluate_wrong_Q_dimension_raises(system_trajectory: SystemTrajectory):
     Q = np.eye(3, dtype=np.float64)
     cost = QuadraticCost(Q=Q, R={})
     with pytest.raises(ValueError, match="Q must match state dimension"):
-        _ = cost.evaluate_system_trajectory(traj, game_type="dynamic")
+        _ = cost.evaluate_system_trajectory(traj, time_domain="discrete")
 
 def test_evaluate_wrong_R_dimension_raises(system_trajectory: SystemTrajectory, Q_good: np.ndarray):
     traj = system_trajectory
@@ -128,7 +128,7 @@ def test_evaluate_wrong_R_dimension_raises(system_trajectory: SystemTrajectory, 
     R_bad = {(1,1): np.array([[1.0]], dtype=np.float64)}
     cost = QuadraticCost(Q=Q_good, R=R_bad)
     with pytest.raises(ValueError, match=r"must match input dimensions"):
-        _ = cost.evaluate_system_trajectory(traj, game_type="dynamic")
+        _ = cost.evaluate_system_trajectory(traj, time_domain="discrete")
 
 
 ################################

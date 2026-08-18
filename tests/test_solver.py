@@ -44,7 +44,7 @@ def lqgame_ct():
     p0 = LQPlayer(strategy=LinearStrategy(K0), cost=QuadraticCost(Q, {(0,0): R0, (1,1): R1}), player_idx=0)
     p1 = LQPlayer(strategy=LinearStrategy(K1), cost=QuadraticCost(Q, {(0,0): R0, (1,1): R1}), player_idx=1)
 
-    return LQGame(system=system, players=[p0, p1], type="differential")
+    return LQGame(system=system, players=[p0, p1], time_domain="continuous")
 
 @pytest.fixture
 def lqgame_dt():
@@ -69,7 +69,7 @@ def lqgame_dt():
     p0 = LQPlayer(strategy=LinearStrategy(K0), cost=QuadraticCost(Q, {(0,0): R0, (1,1): R1}), player_idx=0)
     p1 = LQPlayer(strategy=LinearStrategy(K1), cost=QuadraticCost(Q, {(0,0): R0, (1,1): R1}), player_idx=1)
 
-    return LQGame(system=system, players=[p0, p1], type="dynamic", Sigma0=np.eye(2))
+    return LQGame(system=system, players=[p0, p1], time_domain="discrete", Sigma0=np.eye(2))
 
 
 ################################
@@ -118,10 +118,11 @@ def test_policy_iteration_dt_converges(lqgame_dt: LQGame):
         assert isinstance(s, LinearStrategy)
 
 def test_policy_iteration_lyapunov_pd_precondition(lqgame_ct: LQGame, monkeypatch):
-    # Make player's lyapunov_matrix return a matrix with non-positive eigenvalues to trigger the precondition error
-    def fake_lyap(*args, **kwargs):
-        return np.array([[0.0, 0.0], [0.0, -1.0]])
-    monkeypatch.setattr(lqgame_ct.players[0], "lyapunov_matrix", lambda strategies, A_cl, game_type: fake_lyap(), raising=True)
+    # Make the batched Lyapunov solve return a first matrix with non-positive eigenvalues to
+    # trigger the precondition error
+    def fake_lyap_batch(A_cl, Ms):
+        return [np.array([[0.0, 0.0], [0.0, -1.0]])] + [np.eye(A_cl.shape[0]) for _ in Ms[1:]]
+    monkeypatch.setattr(lqgame_ct.time_domain, "solve_lyapunov_batch", fake_lyap_batch, raising=True)
     with pytest.raises(ValueError, match="First Lyapunov matrix not positive definite"):
         _policy_iteration(lqgame_ct, initial_strategies=[p.strategy for p in lqgame_ct.players])
 
@@ -162,5 +163,5 @@ def test_feedback_nash_equilibrium_fallback_chain_ct(monkeypatch, lqgame_ct: LQG
     monkeypatch.setattr("src.gamecore.solver._policy_iteration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail cascade")), raising=True)
     monkeypatch.setattr("src.gamecore.solver._care_value_iteration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail care")), raising=True)
     monkeypatch.setattr("src.gamecore.solver._cdre_finite_horizon_simulation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail cdre")), raising=True)
-    with pytest.raises(RuntimeError, match="All available methods"):
+    with pytest.raises(RuntimeError, match="methods to compute feedback Nash strategies"):
         feedback_nash_equilibrium(lqgame_ct)

@@ -50,7 +50,7 @@ def players(strategies: list[LinearStrategy]):
 
 @pytest.fixture
 def lqgame(system: LinearSystem, players: list[LQPlayer]):
-    return LQGame(system=system, players=players, type="differential", Sigma0=np.eye(system.n))
+    return LQGame(system=system, players=players, time_domain="continuous", Sigma0=np.eye(system.n))
 
 
 def test_lqgame_feedback_nash_equilibria(lqgame: LQGame) -> None:

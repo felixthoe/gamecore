@@ -4,16 +4,18 @@ import numpy as np
 
 from ..cost.quadratic_cost import QuadraticCost
 from ..system.linear_system import LinearSystem
+from ..time_domain import TimeDomain, resolve_time_domain
 from ..utils.utils import (
-    random_PSD_matrix, 
-    random_PD_matrix, 
-    random_symmetric_matrix, 
+    random_PSD_matrix,
+    random_PD_matrix,
+    random_symmetric_matrix,
     random_matrix,
     is_detectable,
 )
 
 def make_random_costs(
     system: LinearSystem,
+    time_domain: str | TimeDomain = "continuous",
     q_i: str = "pd",
     r_ijj: str = "free",             # Diagonal terms u[j].T R_i,jj u[j]
     r_ijk: str = "zero",             # Cross terms j≠k u[j].T R_i,jk u[k]
@@ -21,6 +23,7 @@ def make_random_costs(
     sparsity: float = 0.0,
     amplitude: float = 10.0,
     diag: bool = True,
+    max_iter: int = 1000,
     seed: int | None = None,
 ) -> list[QuadraticCost]:
     """
@@ -30,18 +33,21 @@ def make_random_costs(
     Parameters
     ----------
     system : LinearSystem
-        The system on which the game is defined.        
+        The system on which the game is defined.
+    time_domain : str | TimeDomain
+        Whether the game evolves in continuous or discrete time. Used to check detectability
+        when q_i="psd".
     q_i : str
         Definiteness of the Q_i matrices. Either "pd" for positive definite,
         or "psd" for positive semidefinite.
         "pd" sufficiently ensures that (A, Q_i^{1/2}) is detectable for each player i.
     r_ijj : str
         Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
-        "psd" for positive semidefinite, or "free" for arbitrary matrices. 
+        "psd" for positive semidefinite, or "free" for arbitrary matrices.
         Positive semidefiniteness of the overall block matrix R_i is enforced if enforce_psd_r_i is True.
     r_ijk : str
         Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
-        or "free" for arbitrary matrices. 
+        or "free" for arbitrary matrices.
         "free" requires r_ijj in {"free", "psd"} to be valid if enforce_psd_r_i is True.
         Positive semidefiniteness of the overall block matrix R_i is enforced if enforce_psd_r_i is True.
     enforce_psd_r_i : bool
@@ -53,6 +59,8 @@ def make_random_costs(
     diag : bool
         Structure of the Q and R matrices. If True, use diagonal matrices,
         if False, use full matrices.
+    max_iter : int
+        Maximum attempts per player to find a Q_i satisfying detectability when q_i="psd".
     seed : int, optional
         Random seed for reproducibility.
 
@@ -60,7 +68,8 @@ def make_random_costs(
     -------
     list[QuadraticCost]
         List of costs per player.
-    """  
+    """
+    time_domain = resolve_time_domain(time_domain)
     rng = np.random.default_rng(seed)
     A = system.A
     n = system.n
@@ -73,12 +82,14 @@ def make_random_costs(
     elif q_i == "psd":
         Qs = []
         for i in range(N):
-            while True:
+            for _ in range(max_iter):
                 Q_i = random_PSD_matrix(n=n, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng)
                 # Ensure (A, Q_i^{1/2}) is detectable
-                if is_detectable(A, Q_i):
+                if is_detectable(A, Q_i, time_domain=time_domain):
                     Qs.append(Q_i)
                     break
+            else:
+                raise RuntimeError(f"Cost Factory: Failed to find a detectable Q_{i} after {max_iter} attempts.")
     else:
         raise ValueError(f"Cost Factory: Unknown value for q_i '{q_i}'. Use 'pd' or 'psd'.")
 

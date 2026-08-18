@@ -1,12 +1,13 @@
 # src/gamecore/game/lq_game.py
 
 import numpy as np
-from scipy.linalg import eigvals, solve_continuous_lyapunov, solve_discrete_lyapunov
+from scipy.linalg import eigvals
 
 from .base_game import BaseGame
 from ..player.lq_player import LQPlayer
 from ..strategy.linear_strategy import LinearStrategy
 from ..system.linear_system import LinearSystem
+from ..time_domain import TimeDomain
 from ..utils.logger import DataLogger
 
 class LQGame(BaseGame):
@@ -15,25 +16,29 @@ class LQGame(BaseGame):
     """
 
     def __init__(
-        self,          
+        self,
         system: LinearSystem,
         players: list[LQPlayer],
-        type: str = "differential",
+        time_domain: str | TimeDomain = "continuous",
         Sigma0: np.ndarray | None = None,
+        check_stability: bool = True,
     ):
         """
-        Initializes the LQGame with system, players, game type, and initial state covariance.
-        
+        Initializes the LQGame with system, players, time domain, and initial state covariance.
+
         Parameters
         ----------
         system : LinearSystem
             The linear system shared by all players.
         players : list[LQPlayer]
             List of LQ players in the game.
-        type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
         Sigma0 : np.ndarray, optional
             Initial state covariance matrix. If None, defaults to identity matrix.
+        check_stability : bool, optional
+            Whether to verify closed-loop stability at construction time (printing a warning if
+            unstable). Default is True; set to False when the caller has already verified it.
         """
         # Consistency checks
         if not all(isinstance(player, LQPlayer) for player in players):
@@ -59,16 +64,16 @@ class LQGame(BaseGame):
                     raise ValueError(f"R_{i},{j}{k} shape mismatch: expected ({m_j}, {m_k}), got {R_ijk.shape}")
                 if j == i and k == i and not np.all(np.linalg.eigvalsh(R_ijk) > 0):
                     raise ValueError(f"R_{i},{i}{i} must be positive definite")
-        super().__init__(system=system, players=players, type=type)
+        super().__init__(system=system, players=players, time_domain=time_domain)
         self.Sigma0 = Sigma0 if Sigma0 is not None else np.eye(system.n)
         # Ensure static type checkers work properly
         self.system: LinearSystem
         self.players: list[LQPlayer]
 
         # Closed-loop system stability check
-        if not self.is_closed_loop_stable():
+        if check_stability and not self.is_closed_loop_stable():
             print("Warning: System is not closed loop stable given the current strategies.")
-    
+
     def is_closed_loop_stable(self, strategies: list[LinearStrategy] | None = None) -> bool:
         """
         Check if the closed-loop system is stable.
@@ -77,7 +82,7 @@ class LQGame(BaseGame):
         ----------
         strategies : list[LinearStrategy], optional
             List of strategies for all players. If None, uses the current strategies.
-        
+
         Returns
         -------
         bool
@@ -87,20 +92,17 @@ class LQGame(BaseGame):
             strategies = self.strategies
         A_cl = self.system.A_cl(strategies)
         eigs = eigvals(A_cl)
-        if self.type == "differential":
-            return np.all(np.real(eigs) < 0)
-        else: # dynamic
-            return np.all(np.abs(eigs) < 1)
-    
+        return self.time_domain.is_stable(eigs)
+
     def A_cl(self, strategies: list[LinearStrategy] | None = None) -> np.ndarray:
         """
         Computes the closed-loop system matrix A_cl based on the given or current strategies.
-        
+
         Parameters
         ----------
         strategies : list[LinearStrategy], optional
             List of strategies for all players. If None, uses the current strategies.
-        
+
         Returns
         -------
         np.ndarray
@@ -115,12 +117,12 @@ class LQGame(BaseGame):
                 if not isinstance(strategy, LinearStrategy):
                     raise TypeError(f"Strategy {i} must be an instance of LinearStrategy")
         return self.system.A_cl(strategies)
-    
+
     def Ms(self) -> list[np.ndarray]:
         """
         Computes the combined cost matrices M_i = Q_i + ∑_{j,k} K_jᵀ R_{i,jk} K_k for all players.
         Wrapper for the cost's M method.
-        
+
         Returns
         -------
         list[np.ndarray]
@@ -128,15 +130,17 @@ class LQGame(BaseGame):
         """
         return [player.cost.M(strategies=self.strategies) for player in self.players]
 
-    def lyapunov_matrices(self, strategies: list[LinearStrategy] | None = None) -> list[np.ndarray]:
+    def lyapunov_matrices(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> list[np.ndarray]:
         """
         Computes the Lyapunov matrices for all players under the given or current strategies.
         Wrapper with central computation of the closed-loop system matrix A_cl.
-        
+
         Parameters
         ----------
         strategies : list[LinearStrategy], optional
             List of strategies for all players. If None, uses the current strategies.
+        A_cl : np.ndarray, optional
+            Precomputed closed-loop system matrix. If None, computed from `strategies`.
 
         Returns
         -------
@@ -145,18 +149,22 @@ class LQGame(BaseGame):
         """
         if strategies is None:
             strategies = self.strategies
-        A_cl = self.system.A_cl(strategies)
+        if A_cl is None:
+            A_cl = self.system.A_cl(strategies)
 
-        return [player.lyapunov_matrix(strategies=strategies, A_cl=A_cl, game_type=self.type) for player in self.players]
-    
-    def state_covariance(self, strategies: list[LinearStrategy] | None = None) -> np.ndarray:
+        Ms = [player.M(strategies) for player in self.players]
+        return self.time_domain.solve_lyapunov_batch(A_cl, Ms)
+
+    def state_covariance(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> np.ndarray:
         """
         Computes the state covariance matrix X under the given or current strategies.
-        
+
         Parameters
         ----------
         strategies : list[LinearStrategy], optional
             List of strategies for all players. If None, uses the current strategies.
+        A_cl : np.ndarray, optional
+            Precomputed closed-loop system matrix. If None, computed from `strategies`.
 
         Returns
         -------
@@ -165,19 +173,15 @@ class LQGame(BaseGame):
         """
         if strategies is None:
             strategies = self.strategies
-        A_cl = self.system.A_cl(strategies)
-        if self.type == "differential":
-            X = solve_continuous_lyapunov(A_cl, -self.Sigma0)
-        else:  # dynamic
-            X = solve_discrete_lyapunov(A_cl, self.Sigma0)
-
-        return X
+        if A_cl is None:
+            A_cl = self.system.A_cl(strategies)
+        return self.time_domain.solve_lyapunov(A_cl.T, self.Sigma0)
 
     def strategies_costs(self, strategies: list[LinearStrategy] | None = None) -> list[float]:
         """
         Computes total cost for all players under the current Linear Strategies.
         Wrapper with central computation of the closed-loop system matrix A_cl.
-        
+
         Parameters
         ----------
         strategies : list[LinearStrategy], optional
@@ -190,19 +194,37 @@ class LQGame(BaseGame):
         """
         strategies = strategies if strategies is not None else self.strategies
 
-        return [player.strategy_cost(strategies=strategies, system=self.system, game_type=self.type, Sigma0=self.Sigma0) for player in self.players]
-    
+        A_cl = self.system.A_cl(strategies)
+        Ms = [player.M(strategies) for player in self.players]
+        Ps = self.time_domain.solve_lyapunov_batch(A_cl, Ms)
+        return [float(np.trace(P_i @ self.Sigma0)) for P_i in Ps]
+
+    def copy(self) -> "LQGame":
+        """
+        Create a deep copy of the game instance, including Sigma0. Skips the closed-loop
+        stability check, since the strategies were already validated when this instance was
+        constructed.
+
+        Returns
+        -------
+        LQGame
+            A new instance with copied system, players, time domain, and Sigma0.
+        """
+        system_copy = self.system.copy()
+        players_copy = [player.copy() for player in self.players]
+        return LQGame(system=system_copy, players=players_copy, time_domain=self.time_domain, Sigma0=self.Sigma0.copy(), check_stability=False)
+
     def __str__(self):
         string = "== LQGame ==\n"
         string += f"Number of players: {self.N}\n"
         string += f"Number of states: {self.n}\n"
         string += f"Number of inputs: {self.ms}\n"
-        string += f"Game type: {self.type}\n\n"
+        string += f"Time domain: {self.time_domain.label}\n\n"
         string += self.system.__str__() + "\n"
         for player in self.players:
             string += player.__str__() + "\n"
         return string
-    
+
     def log(self, logger: DataLogger, prefix: str = ""):
         """
         Log the LQGame configuration, including system and player parameters.

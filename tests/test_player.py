@@ -108,12 +108,12 @@ def test_M_delegates_to_cost(linear_strategy, quadratic_cost):
 def test_strategy_cost_differential(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
     # Use identity Sigma0 by default
-    val = p.strategy_cost(strategies=strategies, system=system, game_type="differential")
+    val = p.strategy_cost(strategies=strategies, system=system, time_domain="continuous")
     assert np.isfinite(val)
 
 def test_strategy_cost_dynamic(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
-    val = p.strategy_cost(strategies=strategies, system=system, game_type="dynamic")
+    val = p.strategy_cost(strategies=strategies, system=system, time_domain="discrete")
     assert np.isfinite(val)
 
 def test_strategy_cost_sigma0_validation(system, strategies, quadratic_cost):
@@ -138,16 +138,16 @@ def test_lyapunov_strategies_type_validation(system, quadratic_cost):
 
 def test_lyapunov_with_system(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
-    P = p.lyapunov_matrix(strategies=strategies, system=system, game_type="differential")
+    P = p.lyapunov_matrix(strategies=strategies, system=system, time_domain="continuous")
     assert P.shape == (system.n, system.n)
     # Discrete time branch
-    Pd = p.lyapunov_matrix(strategies=strategies, system=system, game_type="dynamic")
+    Pd = p.lyapunov_matrix(strategies=strategies, system=system, time_domain="discrete")
     assert Pd.shape == (system.n, system.n)
 
 def test_lyapunov_with_provided_Acl(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
     Acl = system.A_cl(strategies)
-    P = p.lyapunov_matrix(strategies=strategies, A_cl=Acl, game_type="differential")
+    P = p.lyapunov_matrix(strategies=strategies, A_cl=Acl, time_domain="continuous")
     assert P.shape == (system.n, system.n)
 
 
@@ -164,7 +164,7 @@ def test_system_trajectory_cost_delegation(quadratic_cost):
     traj = SystemTrajectory(t=t, x=x, us=[u0, u1], costs=None)
 
     p = LQPlayer(strategy=LinearStrategy(np.array([[1.0, 0.0]])), cost=quadratic_cost, player_idx=0)
-    val = p.system_trajectory_cost(traj, game_type="differential")
+    val = p.system_trajectory_cost(traj, time_domain="continuous")
     assert np.isfinite(val)
 
 

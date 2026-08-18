@@ -52,11 +52,11 @@ def players(strategies: list[LinearStrategy]):
 
 @pytest.fixture
 def game(system: LinearSystem, players: list[LQPlayer]):
-    return BaseGame(system=system, players=players, type="differential")
+    return BaseGame(system=system, players=players, time_domain="continuous")
 
 @pytest.fixture
 def lqgame(system: LinearSystem, players: list[LQPlayer]):
-    return LQGame(system=system, players=players, type="differential", Sigma0=np.eye(system.n))
+    return LQGame(system=system, players=players, time_domain="continuous", Sigma0=np.eye(system.n))
 
 
 ################################
@@ -102,8 +102,8 @@ def test_basegame_player_index_consistency(system: LinearSystem, strategies: lis
         BaseGame(system=system, players=[p0, p1])
 
 def test_basegame_type_validation(system: LinearSystem, players: list[LQPlayer]):
-    with pytest.raises(ValueError, match="Game type must be either 'differential' or 'dynamic'"):
-        BaseGame(system=system, players=players, type="invalid")
+    with pytest.raises(ValueError, match="time_domain must be 'continuous', 'discrete', or a TimeDomain"):
+        BaseGame(system=system, players=players, time_domain="invalid")
 
 def test_basegame_accessors(game: BaseGame):
     # strategies and copies
@@ -128,7 +128,7 @@ def test_simulate_differential_basic(game: BaseGame):
         assert u.shape[0] == traj.x.shape[0]
 
 def test_simulate_dynamic_basic(system: LinearSystem, players: list[LQPlayer]):
-    game = BaseGame(system=system, players=players, type="dynamic")
+    game = BaseGame(system=system, players=players, time_domain="discrete")
     x0 = np.array([1.0, -1.0], dtype=np.float64)
     steps = 5
     traj = game.simulate_system(x0=x0, T=steps)
@@ -139,7 +139,7 @@ def test_simulate_dynamic_basic(system: LinearSystem, players: list[LQPlayer]):
         assert u.shape == (steps + 1, u.shape[1])  # (steps+1, m_i)
 
 def test_simulate_dynamic_T_validation(system: LinearSystem, players: list[LQPlayer]):
-    game = BaseGame(system=system, players=players, type="dynamic")
+    game = BaseGame(system=system, players=players, time_domain="discrete")
     with pytest.raises(ValueError, match="T must be a positive integer"):
         _ = game.simulate_system(x0=np.ones(system.n), T=0)
     with pytest.raises(ValueError, match="T must be a positive integer"):
@@ -224,7 +224,7 @@ def test_lqgame_str_contains_sections(lqgame: LQGame):
     s = str(lqgame)
     assert "== LQGame ==" in s
     assert "Number of players:" in s
-    assert "Game type:" in s
+    assert "Time domain:" in s
     assert "LinearSystem" in s
     assert "LQPlayer" in s
 
@@ -241,7 +241,7 @@ def test_log_and_load_round_trip(temp_logger: DataLogger, lqgame: LQGame):
     lqgame.log(logger, prefix=prefix)
 
     # BaseGame.load should be able to read back types and components
-    # It expects certain metadata keys for types; BaseGame.log writes only 'type', 'N', 'game_type'
+    # It expects certain metadata keys for types; BaseGame.log writes only 'type', 'N', 'time_domain'
     # The system and player log() must write their type metadata keys as "{prefix}*_type"
     # Validate presence of Sigma0
     Sigma0_loaded = logger.load_array(f"{prefix}Sigma0")
@@ -251,7 +251,7 @@ def test_log_and_load_round_trip(temp_logger: DataLogger, lqgame: LQGame):
     restored = BaseGame.load(logger, prefix=prefix)
     assert isinstance(restored, LQGame)
     assert restored.N == lqgame.N
-    assert restored.type == lqgame.type
+    assert restored.time_domain.label == lqgame.time_domain.label
     # Compare system matrices
     assert np.allclose(restored.system.A, lqgame.system.A)
     for i in range(restored.N):

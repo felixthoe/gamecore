@@ -90,7 +90,7 @@ def tiny_lqgame_ct():
     game = LQGame(
         system=system,
         players=[p0, p1],
-        type="differential",
+        time_domain="continuous",
         Sigma0=np.eye(2),
     )
     return game
@@ -153,7 +153,7 @@ def tiny_lqgame_dt():
     game = LQGame(
         system=system,
         players=[p0, p1],
-        type="dynamic",
+        time_domain="discrete",
         Sigma0=np.eye(2),
     )
     return game

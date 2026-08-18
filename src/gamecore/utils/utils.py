@@ -4,6 +4,8 @@ import numpy as np
 from numpy.linalg import matrix_rank
 from scipy.stats import ortho_group
 
+from ..time_domain import TimeDomain, resolve_time_domain
+
 
 def is_controllable(A: np.ndarray, B: np.ndarray) -> bool:
     """Check controllability of (A, B) via rank condition."""
@@ -17,33 +19,46 @@ def is_observable(A: np.ndarray, C: np.ndarray) -> bool:
     """Checks observability of (A, C)."""
     return is_controllable(A.T, C.T)
 
-def is_stabilizable(A: np.ndarray, B: np.ndarray, game_type: str = "differential") -> bool:
-    """Checks stabilizability of (A, B)."""
-    eigvals, eigvecs = np.linalg.eig(A.T)
-    for i, λ in enumerate(eigvals):
-        if game_type == "differential":
-            unstable = np.real(λ) > 0
-        elif game_type == "dynamic":
-            unstable = np.abs(λ) >= 1.0
-        else:
-            raise ValueError(f"Unknown game type: {game_type}")
-        if unstable:
-            w = eigvecs[:, i]
-            if not controls_mode(w, B):
-                return False
-    return True
+def unstable_eigenvalues(A: np.ndarray, time_domain: str | TimeDomain = "continuous") -> np.ndarray:
+    """
+    Eigenvalues of A lying outside the open stable region.
 
-def is_detectable(A: np.ndarray, C: np.ndarray, game_type: str = "differential") -> bool:
+    Parameters
+    ----------
+    A : np.ndarray
+        System matrix.
+    time_domain : str | TimeDomain
+        Whether to test eigenvalues against the continuous- or discrete-time stability boundary.
+
+    Returns
+    -------
+    np.ndarray
+        Eigenvalues of A outside the open stable region (with multiplicity).
+    """
+    time_domain = resolve_time_domain(time_domain)
+    eigvals = np.linalg.eigvals(A)
+    return eigvals[~time_domain.is_stable_eig(eigvals)]
+
+def controls_eigenvalue(A: np.ndarray, lam: complex, B: np.ndarray) -> bool:
+    """
+    Hautus rank test: whether B controls the mode at eigenvalue `lam` of A, i.e. whether
+    rank([A - lam*I, B]) = n. Used instead of the textbook left-eigenvector PBH form (checking
+    w^T B != 0 for each left eigenvector w of A), which is only equivalent to this for
+    non-defective A: for a repeated eigenvalue with a nontrivial Jordan block, `np.linalg.eig`'s
+    returned eigenvectors are not a valid basis (numerically ill-conditioned or near-parallel),
+    and testing them individually can pass even when the true controllable subspace excludes
+    part of that eigenspace.
+    """
+    n = A.shape[0]
+    return matrix_rank(np.hstack([A - lam * np.eye(n), B])) == n
+
+def is_stabilizable(A: np.ndarray, B: np.ndarray, time_domain: str | TimeDomain = "continuous") -> bool:
+    """Checks stabilizability of (A, B) via the Hautus rank test."""
+    return all(controls_eigenvalue(A, lam, B) for lam in unstable_eigenvalues(A, time_domain))
+
+def is_detectable(A: np.ndarray, C: np.ndarray, time_domain: str | TimeDomain = "continuous") -> bool:
     """Checks detectability of (A, C)."""
-    return is_stabilizable(A.T, C.T, game_type=game_type)
-
-def controls_mode(w: np.ndarray, B: np.ndarray) -> bool:
-    """Checks if the given mode w (left Eigenvector) can be controlled with B."""
-    return np.any(np.abs(w.T @ B) > 1e-10)
-
-def observes_mode(v: np.ndarray, C: np.ndarray) -> bool:
-    """Checks if the given mode v (right Eigenvector) can be observed with C."""
-    return np.any(np.abs(C @ v) > 1e-10)
+    return is_stabilizable(A.T, C.T, time_domain=time_domain)
 
 def is_pos_def(M: np.ndarray) -> bool:
     return np.all(np.linalg.eigvalsh(M) > 0)

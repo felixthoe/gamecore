@@ -139,8 +139,8 @@ def groebner_feedback_nash_equilibria(
             Rs.append(p.cost.R)
     except Exception as e:
         raise ValueError("Error extracting LQ game data. Ensure lq_game is properly initialized.") from e
-    if lq_game.type == "dynamic":
-        raise ValueError("Groebner basis method only works for differential games.")
+    if lq_game.time_domain.is_discrete:
+        raise ValueError("Groebner basis method only works for continuous-time games.")
 
     # 1) Build symbolic unknowns: for X1..XN and X_{N+1} (Lyap)
     X_syms_all = []

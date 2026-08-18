@@ -33,26 +33,55 @@ def dynamic_system() -> LinearSystem:
 # Tests
 ################################
 
-@pytest.mark.parametrize("game_type", ["differential", "dynamic"])
-def test_make_lqr_strategy(differential_system: LinearSystem, dynamic_system: LinearSystem, game_type: str) -> None:
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
+def test_make_lqr_strategy(differential_system: LinearSystem, dynamic_system: LinearSystem, time_domain: str) -> None:
     """Test computation of optimal LQR gain for a single player."""
-    if game_type == "differential":
+    if time_domain == "continuous":
         system = differential_system
     else:
         system = dynamic_system
     cost = make_random_costs(system=system, seed=SEED)[0]
-    strategy = make_lqr_strategy(system=system, cost=cost, player_idx=0, game_type=game_type)
+    strategy = make_lqr_strategy(system=system, cost=cost, player_idx=0, time_domain=time_domain)
     assert isinstance(strategy, LinearStrategy)
     assert strategy.K.shape == (system.ms[0], system.n)
 
-@pytest.mark.parametrize("game_type", ["differential", "dynamic"])
-def test_make_random_strategies(differential_system: LinearSystem, dynamic_system: LinearSystem, game_type: str) -> None:
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
+def test_make_random_strategies(differential_system: LinearSystem, dynamic_system: LinearSystem, time_domain: str) -> None:
     """Test random stabilizing strategies."""
-    if game_type == "differential":
+    if time_domain == "continuous":
         system = differential_system
     else:
         system = dynamic_system
-    strategies = make_random_strategies(system=system, game_type=game_type, seed=SEED)
+    strategies = make_random_strategies(system=system, time_domain=time_domain, seed=SEED)
     assert isinstance(strategies, list)
     assert len(strategies) == system.N
     assert all(isinstance(strategy, LinearStrategy) for strategy in strategies)
+
+
+def _is_closed_loop_stable(system: LinearSystem, strategies: list[LinearStrategy], time_domain: str) -> bool:
+    A_cl = system.A_cl(strategies)
+    eigs = np.linalg.eigvals(A_cl)
+    if time_domain == "continuous":
+        return bool(np.all(np.real(eigs) < 0))
+    return bool(np.all(np.abs(eigs) < 1.0))
+
+
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
+@pytest.mark.parametrize("strategy_init", ["joint_lqr", "random_pole_placement", "random_bisection"])
+def test_make_random_strategies_modes_are_stabilizing(
+    differential_system: LinearSystem, dynamic_system: LinearSystem, time_domain: str, strategy_init: str
+) -> None:
+    """Every strategy_init mode must produce a certified-stabilizing joint gain, not just the right shapes."""
+    system = differential_system if time_domain == "continuous" else dynamic_system
+    strategies = make_random_strategies(system=system, time_domain=time_domain, strategy_init=strategy_init, seed=SEED)
+    assert _is_closed_loop_stable(system, strategies, time_domain)
+
+
+def test_random_bisection_is_not_near_optimal(differential_system: LinearSystem) -> None:
+    """random_bisection should differ substantially from the near-optimal joint_lqr gain, not be a
+    lightly-perturbed copy of it."""
+    good = make_random_strategies(system=differential_system, strategy_init="joint_lqr", seed=SEED)
+    bad = make_random_strategies(system=differential_system, strategy_init="random_bisection", seed=SEED)
+    good_norm = np.concatenate([s.K.flatten() for s in good])
+    bad_norm = np.concatenate([s.K.flatten() for s in bad])
+    assert not np.allclose(good_norm, bad_norm, rtol=0.5)

@@ -25,12 +25,14 @@ def system() -> LinearSystem:
 # Tests
 ################################
 
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
 @pytest.mark.parametrize("q_i", ["pd", "psd"])
 @pytest.mark.parametrize("r_ijj", ["zero", "psd", "free"])
 @pytest.mark.parametrize("r_ijk", ["zero", "free"])
 @pytest.mark.parametrize("enforce_psd_r_i", [True, False])
 def test_make_random_costs(
     system: LinearSystem,
+    time_domain: str,
     q_i: str,
     r_ijj: str,
     r_ijk: str,
@@ -41,6 +43,7 @@ def test_make_random_costs(
         pytest.skip("Invalid combination of r_ijj, r_ijk, and enforce_psd_r_i")
     costs = make_random_costs(
         system=system,
+        time_domain=time_domain,
         q_i=q_i,
         r_ijj=r_ijj,
         r_ijk=r_ijk,

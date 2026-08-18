@@ -2,13 +2,13 @@
 
 from dataclasses import dataclass
 import numpy as np
-from scipy.linalg import solve_continuous_lyapunov, solve_discrete_lyapunov
 
 from .base_player import BasePlayer
 from ..strategy.linear_strategy import LinearStrategy
 from ..cost.quadratic_cost import QuadraticCost
 from ..system.linear_system import LinearSystem
 from ..system_trajectory import SystemTrajectory
+from ..time_domain import TimeDomain, resolve_time_domain
 from ..utils.logger import DataLogger
 
 @dataclass
@@ -45,10 +45,10 @@ class LQPlayer(BasePlayer):
         self.cost : QuadraticCost
     
     def strategy_cost(
-        self, 
-        strategies: list[LinearStrategy], 
-        system: LinearSystem, 
-        game_type: str = "differential",
+        self,
+        strategies: list[LinearStrategy],
+        system: LinearSystem,
+        time_domain: str | TimeDomain = "continuous",
         Sigma0: np.ndarray | None = None
     ) -> float:
         """
@@ -60,8 +60,8 @@ class LQPlayer(BasePlayer):
             List of strategies for all players in the game.
         system : LinearSystem
             The linear system shared by all players.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
         Sigma0 : np.ndarray, optional
             Initial state covariance matrix. If None, identity matrix is used.
 
@@ -76,28 +76,28 @@ class LQPlayer(BasePlayer):
         else:
             if Sigma0.shape != (n, n):
                 raise ValueError(f"Sigma0 must be a square matrix of shape ({n}, {n}).")
-        
-        P_i = self.lyapunov_matrix(strategies, system=system, game_type=game_type)
+
+        P_i = self.lyapunov_matrix(strategies, system=system, time_domain=time_domain)
 
         return np.trace(P_i @ Sigma0)
 
-    def system_trajectory_cost(self, trajectory: SystemTrajectory, game_type: str = "differential") -> float:
+    def system_trajectory_cost(self, trajectory: SystemTrajectory, time_domain: str | TimeDomain = "continuous") -> float:
         """
         Evaluate the quadratic cost from the player's perspective.
-        
+
         Parameters
         ----------
         trajectory : SystemTrajectory
             Full system trajectory including all player inputs.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------
         float
             Total cost incurred by the player.
         """
-        return self.cost.evaluate_system_trajectory(trajectory, game_type=game_type)
+        return self.cost.evaluate_system_trajectory(trajectory, time_domain=time_domain)
     
     def M(self, strategies: list[LinearStrategy]) -> np.ndarray:
         """
@@ -117,11 +117,11 @@ class LQPlayer(BasePlayer):
         return self.cost.M(strategies)
     
     def lyapunov_matrix(
-        self, 
-        strategies: list[LinearStrategy], 
-        system: LinearSystem | None = None, 
+        self,
+        strategies: list[LinearStrategy],
+        system: LinearSystem | None = None,
         A_cl: np.ndarray | None = None,
-        game_type: str = "differential"
+        time_domain: str | TimeDomain = "continuous"
     ) -> np.ndarray:
         """
         Computes the Lyapunov matrix P_i for the player under the given Linear Strategies.
@@ -135,10 +135,10 @@ class LQPlayer(BasePlayer):
             The linear system shared by all players.
             If None, A_cl must be provided.
         A_cl : np.ndarray, optional
-            Closed-loop system matrix. Equal for all players, so a central computation is preferrable. 
+            Closed-loop system matrix. Equal for all players, so a central computation is preferrable.
             If None, it will be computed from the system and strategies.
-        game_type : str
-            type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------
@@ -155,10 +155,7 @@ class LQPlayer(BasePlayer):
 
         M_i = self.M(strategies)
 
-        if game_type == "differential":
-            return solve_continuous_lyapunov(A_cl.T, -M_i)
-        else: # dynamic
-            return solve_discrete_lyapunov(A_cl.T, M_i)
+        return resolve_time_domain(time_domain).solve_lyapunov(A_cl, M_i)
 
     def __str__(self):
         """

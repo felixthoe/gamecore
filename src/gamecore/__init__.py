@@ -2,6 +2,8 @@
 
 """Gamecore: A library for dynamic game theory and control."""
 
+from .time_domain import TimeDomain, ContinuousTimeDomain, DiscreteTimeDomain, resolve_time_domain
+
 from .system.base_system import BaseSystem
 from .cost.base_cost import BaseCost
 from .strategy.base_strategy import BaseStrategy

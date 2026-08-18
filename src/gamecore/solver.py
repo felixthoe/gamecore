@@ -1,7 +1,6 @@
 # src/gamecore/solver.py
 
 import numpy as np
-from scipy.linalg import solve_continuous_are, solve_discrete_are, solve_continuous_lyapunov, solve_discrete_lyapunov
 from scipy.integrate import solve_ivp
 
 from .strategy.linear_strategy import LinearStrategy
@@ -10,8 +9,8 @@ from .game.lq_game import LQGame
 def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrategy] | None = None, finite_horizon_fallback: bool = False, max_iteration: int = 1000, T: float = 1e7, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players using different algorithms.
-    If the cascaded value iteration fails, it falls back to a cascaded policy iteration.
-    If the cascaded policy iteration fails too, it falls back to CDRE-based finite horizon simulation.
+    If the cascaded value iteration fails, it falls back to a simultaenous policy iteration.
+    If the cascaded policy iteration fails too, it falls optionally back to CDRE-based finite horizon simulation.
 
     Parameters
     ----------
@@ -22,7 +21,8 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
         If None, uses the current strategies of the game.
     finite_horizon_fallback : bool, optional
         If True, allows fallback to CDRE-based finite horizon simulation if both cascaded value and
-        policy iterations fail. Default is False (it often takes forever and fails anyway).
+        policy iterations fail. Only supported for continuous-time games. Default is False (it often
+        takes forever and fails anyway).
     max_iteration : int, optional
         Maximum number of iterations for convergence of the iterative solution scheme. Default is 1000.
     T : float, optional
@@ -46,30 +46,30 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
             raise ValueError("Number of initial strategies must match number of players N")
     if not game.is_closed_loop_stable(strategies=initial_strategies):
         raise ValueError("Nash Solver: Initial strategies are not stable")
-    
+
     try:
-        return _policy_iteration(
+        return _care_value_iteration(
             game=game,
-            initial_strategies=initial_strategies, 
-            max_iteration=max_iteration, 
+            initial_strategies=initial_strategies,
+            max_iteration=max_iteration,
             rtol=rtol,
             atol=atol,
         )
     except (RuntimeError, ValueError) as e:
-        print(f"Nash Solver: Policy iteration failed due to: {e}")
-        print("Falling back to Value iteration...")
+        print(f"Nash Solver: Value iteration failed due to: {e}")
+        print("Falling back to Policy iteration...")
         try:
-            return _care_value_iteration(
+            return _policy_iteration(
                 game=game,
-                initial_strategies=initial_strategies, 
-                max_iteration=max_iteration, 
+                initial_strategies=initial_strategies,
+                max_iteration=max_iteration,
                 rtol=rtol,
                 atol=atol,
             )
         except (RuntimeError, ValueError) as f:
-            print(f"Nash Solver: Value iteration failed due to: {f}")
+            print(f"Nash Solver: Policy iteration failed due to: {f}")
             if not finite_horizon_fallback:
-                raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies (finite horizon excluded per argument) have failed.")
+                raise RuntimeError("Nash Solver: All chosen methods to compute feedback Nash strategies (finite horizon excluded per argument) have failed.")
             else:
                 print("Falling back to CDRE-based finite horizon simulation...")
                 try:
@@ -82,14 +82,14 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
                     print(f"Nash Solver: CDRE finite horizon simulation failed due to: {g}")
                     raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies have failed.")
 
-    
+
 def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], cascaded: bool = False, max_iteration: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players oriented at Algorithm 1 of
     Chen et al (2025) "Multiplayer Cascaded Policy Iteration for Nash Differential Games"
     which is a cascaded policy iteration algorithm.
     Extended for dynamic / discrete-time games and for cross control penalties.
-    
+
     Parameters
     ----------
     game : LQGame
@@ -111,7 +111,8 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
     -------
     list[LinearStrategy]
         List of LinearStrategy instances for each player.
-    """    
+    """
+    time_domain = game.time_domain
     A = game.system.A
     Bs = game.system.Bs
     Qs = [player.cost.Q for player in game.players]
@@ -121,13 +122,9 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
     P_0 = game.lyapunov_matrices(strategies=initial_strategies)[0]
     if not np.all(np.linalg.eigvals(P_0) > 0):
         raise ValueError("Nash Solver: First Lyapunov matrix not positive definite")
-    
+
     # Initialization
-    if game.type == "differential":
-        Ks = [np.linalg.solve(Rs[0][(0,0)], Bs[0].T @ P_0)] + [np.zeros_like(B.T) for B in Bs[1:]]
-    else: # dynamic
-        # Formula normally uses A_i = A - sum_{j!=i} B_j K_j, but K_j=0 for initialization for j!=i
-        Ks = [np.linalg.solve(Rs[0][(0,0)] + Bs[0].T @ P_0 @ Bs[0], Bs[0].T @ P_0 @ A)] + [np.zeros_like(B.T) for B in Bs[1:]]
+    Ks = [time_domain.gain_from_riccati(A, Bs[0], Rs[0][(0,0)], P_0)] + [np.zeros_like(B.T) for B in Bs[1:]]
     Ks_old = [K.copy() for K in Ks]
 
     # Iteration until convergence
@@ -136,34 +133,29 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
         if cascaded: # cascaded policy iteration
             for i in range(game.N):
                 # We dont have to use K(k+1) and K(k) separately, as we always update in place, implicitly considering K(k+1) for j<i and K(k) for j>=i
-                A_i = A - sum(Bs[j] @ Ks[j] for j in range(game.N))
+                F = A - sum(Bs[j] @ Ks[j] for j in range(game.N))
                 M_i = Qs[i] + sum(Ks[j].T @ R_ijk @ Ks[k] for (j,k), R_ijk in Rs[i].items())  # also called Q_i in paper
                 # Policy evaluation
-                if game.type == "differential":
-                    P_i = solve_continuous_lyapunov(A_i.T, -M_i)
-                else:  # dynamic
-                    P_i = solve_discrete_lyapunov(A_i.T, M_i)
-                # Policy improvement
-                if game.type == "differential":
-                    Ks[i] = np.linalg.solve(Rs[i][(i,i)], Bs[i].T @ P_i - sum(Rs[i][(i,k)] @ Ks[k] for (j,k) in Rs[i] if j == i and k != i))
-                else:  # dynamic
-                    Ks[i] = np.linalg.solve(Rs[i][(i,i)] + Bs[i].T @ P_i @ Bs[i], Bs[i].T @ P_i @ (A - sum(Bs[j] @ Ks[j] for j in range(i) if j != i)) - sum(Rs[i][(i,k)] @ Ks[k] for (j,k) in Rs[i] if j == i and k != i))
+                P_i = time_domain.solve_lyapunov(F, M_i)
+                # Policy improvement: drive matrix uses only already-updated players (j<i), not
+                # the not-yet-updated old K_j for j>i -- distinct from F's full-sum used above
+                A_i = A - sum(Bs[j] @ Ks[j] for j in range(game.N) if j!=i)
+                cross_term = sum(Rs[i][(i,k)] @ Ks[k] for (j,k) in Rs[i] if j == i and k != i)
+                lhs, rhs = time_domain.feedback_gain_equation(A_i, Bs[i], Rs[i][(i,i)], P_i)
+                Ks[i] = np.linalg.solve(lhs, rhs - cross_term)
 
         else: # simultaneous policy iteration
             F = A - sum(Bs[j] @ Ks_old[j] for j in range(game.N))
             for i in range(game.N):
                 M_i = Qs[i] + sum(Ks_old[j].T @ R_ijk @ Ks_old[k] for (j,k), R_ijk in Rs[i].items())
                 # Policy evaluation
-                if game.type == "differential":
-                    P_i = solve_continuous_lyapunov(F.T, -M_i)
-                else:  # dynamic
-                    P_i = solve_discrete_lyapunov(F.T, M_i)
+                P_i = time_domain.solve_lyapunov(F, M_i)
                 # Policy improvement
-                if game.type == "differential":
-                    Ks[i] = np.linalg.solve(Rs[i][(i,i)], Bs[i].T @ P_i - sum(Rs[i][(i,k)] @ Ks_old[k] for (j,k) in Rs[i] if j == i and k != i))
-                else:  # dynamic
-                    Ks[i] = np.linalg.solve(Rs[i][(i,i)] + Bs[i].T @ P_i @ Bs[i], Bs[i].T @ P_i @ F - sum(Rs[i][(i,k)] @ Ks_old[k] for (j,k) in Rs[i] if j == i and k != i))
-        
+                A_i = F + Bs[i] @ Ks_old[i]
+                cross_term = sum(Rs[i][(i,k)] @ Ks_old[k] for (j,k) in Rs[i] if j == i and k != i)
+                lhs, rhs = time_domain.feedback_gain_equation(A_i, Bs[i], Rs[i][(i,i)], P_i)
+                Ks[i] = np.linalg.solve(lhs, rhs - cross_term)
+
         # Check Convergence
         if all(np.allclose(Ks[i], Ks_old[i], rtol=rtol, atol=atol) for i in range(game.N)):
             break
@@ -180,7 +172,7 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
     Engwerda (2007) "Algorithms for computing Nash equilibria in deterministic LQ games"
     which is basically a cascaded value iteration algorithm.
     Extended for cross control penalties and for dynamic / discrete-time games.
-    
+
     Parameters
     ----------
     game : LQGame
@@ -201,10 +193,11 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
     list[LinearStrategy]
         List of LinearStrategy instances for each player.
     """
+    time_domain = game.time_domain
     A = game.system.A
-    Bs = game.system.Bs    
+    Bs = game.system.Bs
     Rs = [game.players[i].cost.R for i in range(game.N)]
-    
+
     # Compute initial Lyapunov matrices
     Ps = game.lyapunov_matrices(strategies=initial_strategies)
 
@@ -219,10 +212,10 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
     offsets = np.cumsum([0] + [game.ms[i] for i in range(game.N)])
 
     def Ks_from_Ps(Ps: list[np.ndarray]) -> list[np.ndarray]:
-        if game.type == "differential":
+        if time_domain.is_continuous:
             rhs = np.vstack([Bs[i].T @ Ps[i] for i in range(game.N)])
             K_vstack = np.linalg.solve(R_big, rhs)
-        else:  # dynamic
+        else:
             rhs = np.vstack([Bs[i].T @ Ps[i] @ A for i in range(game.N)])
             K_vstack = np.linalg.solve(R_big + np.block([[Bs[i].T @ Ps[i] @ Bs[j] for j in range(game.N)] for i in range(game.N)]), rhs)
         return [K_vstack[offsets[i]:offsets[i+1]] for i in range(game.N)]
@@ -240,10 +233,7 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
             Q_i = player_i.cost.Q.copy()
             Q_i += sum(Ks[j].T @ Rs[i][(j,k)] @ Ks[k] for (j,k) in Rs[i] if j != i and k != i)
             Q_i -= sum(sum(Ks[j].T @ Rs[i][(j,i)] @ np.linalg.solve(Rs[i][(i,i)], Rs[i][(i,m)] @ Ks[m]) for (l,m) in Rs[i] if l == i and m != i) for (j,k) in Rs[i] if j != i and k == i)
-            if game.type == "differential":
-                Ps[i] = solve_continuous_are(a=A_i, b=Bs[i], r=Rs[i][(i,i)], q=Q_i)
-            else:  # dynamic
-                Ps[i] = solve_discrete_are(a=A_i, b=Bs[i], r=Rs[i][(i,i)], q=Q_i)
+            Ps[i] = time_domain.solve_riccati(A_i, Bs[i], Q_i, Rs[i][(i,i)])
         # Check convergence
         if all(np.allclose(Ps[i], Ps_old[i], rtol=rtol, atol=atol) for i in range(game.N)):
             break
@@ -252,13 +242,14 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
 
     # Compute the latest strategies
     K_list = Ks_from_Ps(Ps)
-    return [LinearStrategy(K=K_list[i]) for i in range(game.N)]   
+    return [LinearStrategy(K=K_list[i]) for i in range(game.N)]
 
 
 def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Integrates the coupled differential Riccati equations (CDREs) backward
     over a finite horizon to approximate the stationary Nash feedback gains.
+    Only supported for continuous-time games.
 
     Parameters
     ----------
@@ -269,6 +260,11 @@ def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 
     atol : float, optional
         Absolute tolerance for convergence check in CDRE integration. Default is 1e-12.
     """
+    if not game.time_domain.is_continuous:
+        raise NotImplementedError(
+            "Nash Solver: CDRE finite-horizon fallback is not implemented for discrete-time games "
+            "(the discrete Riccati recursion is a map, not an ODE); rely on policy/value iteration."
+        )
 
     A = game.system.A
     Bs = game.system.Bs
@@ -288,13 +284,8 @@ def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 
     offsets = np.cumsum([0] + [game.ms[i] for i in range(game.N)])
 
     def Ks_from_Ps(Ps: list[np.ndarray]) -> list[np.ndarray]:
-        if game.type == "differential":
-            rhs = np.vstack([Bs[i].T @ Ps[i] for i in range(game.N)])
-            K_vstack = np.linalg.solve(R_big, rhs)
-        else:  # dynamic
-            rhs = np.vstack([Bs[i].T @ Ps[i] @ A for i in range(game.N)])
-            matrix = R_big + np.block([[Bs[i].T @ Ps[i] @ Bs[j] for j in range(game.N)] for i in range(game.N)])
-            K_vstack = np.linalg.solve(matrix, rhs)
+        rhs = np.vstack([Bs[i].T @ Ps[i] for i in range(game.N)])
+        K_vstack = np.linalg.solve(R_big, rhs)
         return [K_vstack[offsets[i]:offsets[i+1]] for i in range(game.N)]
 
     # Initial condition: P_i(T) = 0
@@ -314,13 +305,10 @@ def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 
             Q_i = Qs[i].copy()
             Q_i += sum(Ks[j].T @ Rs[i][(j,k)] @ Ks[k] for (j,k) in Rs[i] if j != i and k != i)
             Q_i -= sum(sum(Ks[j].T @ Rs[i][(j,i)] @ np.linalg.solve(Rs[i][(i,i)], Rs[i][(i,m)] @ Ks[m]) for (l,m) in Rs[i] if l == i and m != i) for (j,k) in Rs[i] if j != i and k == i)
-            if game.type == "differential":
-                P_i_dot = -(A_i.T @ Ps[i] + Ps[i] @ A_i - Ps[i] @ Bs[i] @ np.linalg.solve(Rs[i][(i,i)], Bs[i].T @ Ps[i]) + Q_i)
-            else:  # dynamic
-                P_i_dot = -(Ps[i] - A_i.T @ Ps[i] @ A_i + A_i.T @ Ps[i] @ Bs[i] @ np.linalg.solve(Rs[i][(i,i)] + Bs[i].T @ Ps[i] @ Bs[i], Bs[i].T @ Ps[i] @ A_i) + Q_i)
+            P_i_dot = -(A_i.T @ Ps[i] + Ps[i] @ A_i - Ps[i] @ Bs[i] @ np.linalg.solve(Rs[i][(i,i)], Bs[i].T @ Ps[i]) + Q_i)
             dPs_dt.append(P_i_dot.flatten())
         return np.concatenate(dPs_dt)
-    
+
     def stopping_event(t, Ps_flat):
         dPs_dt_flat = cdre_rhs(t, Ps_flat)
         return np.linalg.norm(dPs_dt_flat) - atol
@@ -328,10 +316,10 @@ def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 
     stopping_event.direction = -1  # We want to stop when the norm is decreasing
 
     sol = solve_ivp(
-        fun=cdre_rhs, 
-        t_span=(T, 0.0), 
+        fun=cdre_rhs,
+        t_span=(T, 0.0),
         y0=Ps_flat0,
-        method="RK45", 
+        method="RK45",
         rtol=1e-13,
         atol=1e-13,
         max_step=T/100,
@@ -381,7 +369,8 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
     else:
         if not isinstance(initial_leader_strat, LinearStrategy):
             raise TypeError("Initial leader strategy must be an instance of LinearStrategy")
-        
+
+    time_domain = game.time_domain
     A = game.system.A
     Bs = game.system.Bs
     Qs = [game.players[i].cost.Q for i in range(game.N)]
@@ -393,30 +382,28 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
         A_follower = A - Bs[leader_index] @ leader_strategy.K + Bs[follower_index] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[follower_index][(follower_index,leader_index)] @ leader_strategy.K)
         Q_follower = Qs[follower_index] + leader_strategy.K.T @ (Rs[follower_index][(leader_index,leader_index)] - Rs[follower_index][(leader_index,follower_index)] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[follower_index][(follower_index,leader_index)])) @ leader_strategy.K
         R_follower = Rs[follower_index][(follower_index,follower_index)]
-        if game.type == "differential":
-            P_follower = solve_continuous_are(a=A_follower, b=Bs[follower_index], r=R_follower, q=Q_follower)
-            K_follower = np.linalg.solve(R_follower, Bs[follower_index].T @ P_follower - Rs[follower_index][(follower_index,leader_index)] @ leader_strategy.K)
-        else:  # dynamic
-            P_follower = solve_discrete_are(a=A_follower, b=Bs[follower_index], r=R_follower, q=Q_follower)
-            K_follower = np.linalg.solve(R_follower + Bs[follower_index].T @ P_follower @ Bs[follower_index], Bs[follower_index].T @ P_follower @ (A - Bs[leader_index] @ leader_strategy.K) - Rs[follower_index][(follower_index,leader_index)] @ leader_strategy.K)
+        P_follower = time_domain.solve_riccati(A_follower, Bs[follower_index], Q_follower, R_follower)
+        A_drive = A - Bs[leader_index] @ leader_strategy.K
+        cross_term = Rs[follower_index][(follower_index,leader_index)] @ leader_strategy.K
+        lhs, rhs = time_domain.feedback_gain_equation(A_drive, Bs[follower_index], R_follower, P_follower)
+        K_follower = np.linalg.solve(lhs, rhs - cross_term)
         return P_follower, LinearStrategy(K=K_follower)
-    
+
     R_dash_leader = Rs[leader_index][(leader_index,leader_index)] - Rs[follower_index][(leader_index, follower_index)] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[leader_index][(follower_index, leader_index)]) + (Rs[follower_index][(leader_index, follower_index)] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[leader_index][(follower_index, follower_index)]) - Rs[leader_index][(leader_index, follower_index)]) @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[follower_index][(follower_index, leader_index)])
     B_dash_leader = Bs[leader_index] - Bs[follower_index] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[follower_index][(follower_index, leader_index)])
     cross_dash_leader = (Rs[follower_index][(leader_index, follower_index)] @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Rs[leader_index][(follower_index, follower_index)]) - Rs[leader_index][(leader_index, follower_index)]) @ np.linalg.solve(Rs[follower_index][(follower_index,follower_index)], Bs[follower_index].T)
-   
+
     def leader_lyapunov_update(leader_strategy: LinearStrategy, follower_strategy: LinearStrategy, P_follower: np.array) -> LinearStrategy:
         A_cl = A - Bs[leader_index] @ leader_strategy.K - Bs[follower_index] @ follower_strategy.K
         strategies_list = [None, None]
         strategies_list[leader_index] = leader_strategy
         strategies_list[follower_index] = follower_strategy
         M_leader = game.players[leader_index].M(strategies=strategies_list)
-        if game.type == "differential":
-            P_leader = solve_continuous_lyapunov(A_cl.T, -M_leader)
-            K_leader = np.linalg.solve(R_dash_leader, B_dash_leader.T @ P_leader + cross_dash_leader @ P_follower)
-        else:  # dynamic
-            P_leader = solve_discrete_lyapunov(A_cl.T, M_leader)
-            K_leader = np.linalg.solve(R_dash_leader + B_dash_leader.T @ P_leader @ B_dash_leader, B_dash_leader.T @ P_leader @ (A - Bs[follower_index] @ follower_strategy.K) + cross_dash_leader @ P_follower)
+        P_leader = time_domain.solve_lyapunov(A_cl, M_leader)
+        A_drive = A - Bs[follower_index] @ follower_strategy.K
+        extra_term = cross_dash_leader @ P_follower
+        lhs, rhs = time_domain.feedback_gain_equation(A_drive, B_dash_leader, R_dash_leader, P_leader)
+        K_leader = np.linalg.solve(lhs, rhs + extra_term)
         return LinearStrategy(K=K_leader)
 
     def leader_riccati_update(leader_strategy: LinearStrategy, follower_strategy: LinearStrategy, P_follower: np.array) -> LinearStrategy:
@@ -435,5 +422,5 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
         leader_strategy_old = leader_strategy.copy()
     else:
         raise RuntimeError(f"Feedback Stackelberg strategies did not converge within {max_iteration} iterations")
-    
+
     return [leader_strategy, follower_strategy]

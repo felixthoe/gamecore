@@ -7,6 +7,7 @@ from ..strategy.linear_strategy import LinearStrategy
 from ..cost.base_cost import BaseCost
 from ..cost.quadratic_cost import QuadraticCost
 from ..system_trajectory import SystemTrajectory
+from ..time_domain import TimeDomain
 from ..utils.logger import DataLogger
 from ..system.linear_system import LinearSystem
 
@@ -33,7 +34,7 @@ class BasePlayer(ABC):
         self.learning_rate = float(learning_rate)
 
     @abstractmethod
-    def strategy_cost(self, strategies: list[BaseStrategy], system: LinearSystem, game_type: str = "differential") -> float:
+    def strategy_cost(self, strategies: list[BaseStrategy], system: LinearSystem, time_domain: str | TimeDomain = "continuous") -> float:
         """
         Evaluate the player's cost given a set of strategies and system.
 
@@ -43,8 +44,8 @@ class BasePlayer(ABC):
             List of strategies for all players in the game.
         system : LinearSystem
             The linear system shared by all players.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------
@@ -54,7 +55,7 @@ class BasePlayer(ABC):
         pass
 
     @abstractmethod
-    def system_trajectory_cost(self, trajectory: SystemTrajectory, game_type: str = "differential", *args, **kwargs) -> float:
+    def system_trajectory_cost(self, trajectory: SystemTrajectory, time_domain: str | TimeDomain = "continuous", *args, **kwargs) -> float:
         """
         Evaluate the player's cost given a system trajectory.
 
@@ -62,8 +63,8 @@ class BasePlayer(ABC):
         ----------
         trajectory : SystemTrajectory
             Full system trajectory including all player inputs.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------

@@ -5,6 +5,7 @@ import numpy as np
 
 from .base_cost import BaseCost
 from ..system_trajectory import SystemTrajectory
+from ..time_domain import TimeDomain, resolve_time_domain
 from ..utils.logger import DataLogger
 from ..strategy.linear_strategy import LinearStrategy
 
@@ -54,7 +55,7 @@ class QuadraticCost(BaseCost):
                     if not np.allclose(R_jk, self.R[(k, j)].T):
                         raise ValueError(f"R[{(j, k)}] must be the transpose of R[{(k, j)}] for symmetry")
 
-    def evaluate_system_trajectory(self, trajectory: SystemTrajectory, game_type: str = "differential") -> float:
+    def evaluate_system_trajectory(self, trajectory: SystemTrajectory, time_domain: str | TimeDomain = "continuous") -> float:
         """
         Evaluate the finite-horizon cost (finite due to the simulated trajectories being finite).
 
@@ -62,14 +63,15 @@ class QuadraticCost(BaseCost):
         ----------
         trajectory : SystemTrajectory
             Simulated trajectory.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------
         float
             Total cost.
         """
+        time_domain = resolve_time_domain(time_domain)
         x = trajectory.x
         us = trajectory.us
         t = trajectory.t
@@ -80,27 +82,21 @@ class QuadraticCost(BaseCost):
         for (j, k), R_jk in self.R.items():
             if R_jk.shape != (us[j].shape[1], us[k].shape[1]):
                 raise ValueError(f"R[{(j, k)}] must match input dimensions of u_{j} and u_{k}")
-            
-        if game_type not in ["differential", "dynamic"]:
-            raise ValueError(f"Game type must be either 'differential' or 'dynamic', got '{game_type}'")
 
         dt = np.diff(t)
         dt = np.append(dt, dt[-1])  # Assume last interval is same as second last
         steps = len(t)
 
-        cost = 0.0
+        running_values = np.zeros(steps)
         for step in range(steps):
             state_cost = x[step, :].T @ self.Q @ x[step, :]
             control_cost = sum(
                 us[j][step, :].T @ R_jk @ us[k][step, :]
                 for (j, k), R_jk in self.R.items()
             )
-            if game_type == "differential":
-                cost += (state_cost + control_cost) * dt[step]
-            else:  # dynamic
-                cost += state_cost + control_cost
+            running_values[step] = state_cost + control_cost
 
-        return cost
+        return time_domain.integrate(running_values, dt)
     
     def M(self, strategies: list[LinearStrategy]) -> np.ndarray:
         """

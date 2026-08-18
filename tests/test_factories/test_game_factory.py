@@ -6,14 +6,14 @@ from src.gamecore import LQGame
 from tests.conftest import SEED
 
 
-@pytest.mark.parametrize("game_type", ["differential", "dynamic"])
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
 @pytest.mark.parametrize("stabilizability", ["individual", "joint"])
 @pytest.mark.parametrize("q_i", ["pd", "psd"])
 @pytest.mark.parametrize("r_ijj", ["zero", "psd", "free"])
 @pytest.mark.parametrize("r_ijk", ["zero", "free"])
 @pytest.mark.parametrize("enforce_psd_r_i", [True, False])
 def test_make_random_lq_game_valid_configs(
-    game_type: str, q_i: str, stabilizability: str, r_ijj: str, r_ijk: str, enforce_psd_r_i: bool
+    time_domain: str, q_i: str, stabilizability: str, r_ijj: str, r_ijk: str, enforce_psd_r_i: bool
 ) -> None:
     # exclude invalid combinations
     if r_ijk == "free" and r_ijj == "zero" and enforce_psd_r_i:
@@ -21,7 +21,7 @@ def test_make_random_lq_game_valid_configs(
     game = make_random_lq_game(
         n=3,
         ms=[1, 1],
-        game_type=game_type,
+        time_domain=time_domain,
         system_stabilizability=stabilizability,
         cost_q_i=q_i,
         cost_r_ijj=r_ijj,

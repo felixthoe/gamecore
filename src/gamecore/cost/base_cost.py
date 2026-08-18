@@ -3,8 +3,8 @@
 from abc import ABC, abstractmethod
 
 from ..system_trajectory import SystemTrajectory
+from ..time_domain import TimeDomain
 from ..utils.logger import DataLogger
-from ..strategy.linear_strategy import LinearStrategy
 
 
 class BaseCost(ABC):
@@ -12,11 +12,11 @@ class BaseCost(ABC):
     Abstract base class for player-specific cost parameter and evaluation.
     """
 
-    def __call__(self, trajectory: SystemTrajectory, game_type: str = "differential") -> float:
-        return self.evaluate_system_trajectory(trajectory, game_type=game_type)
+    def __call__(self, trajectory: SystemTrajectory, time_domain: str | TimeDomain = "continuous") -> float:
+        return self.evaluate_system_trajectory(trajectory, time_domain=time_domain)
 
     @abstractmethod
-    def evaluate_system_trajectory(self, trajectory: SystemTrajectory, game_type: str = "differential") -> float:
+    def evaluate_system_trajectory(self, trajectory: SystemTrajectory, time_domain: str | TimeDomain = "continuous") -> float:
         """
         Compute the total cost given a system trajectory.
 
@@ -24,8 +24,8 @@ class BaseCost(ABC):
         ----------
         trajectory : SystemTrajectory
             Simulated system trajectory.
-        game_type : str
-            Type of the game, either "differential" or "dynamic".
+        time_domain : str | TimeDomain
+            Whether the game evolves in continuous or discrete time.
 
         Returns
         -------
