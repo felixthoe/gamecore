@@ -165,3 +165,13 @@ def test_feedback_nash_equilibrium_fallback_chain_ct(monkeypatch, lqgame_ct: LQG
     monkeypatch.setattr("src.gamecore.solver._cdre_finite_horizon_simulation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail cdre")), raising=True)
     with pytest.raises(RuntimeError, match="methods to compute feedback Nash strategies"):
         feedback_nash_equilibrium(lqgame_ct)
+
+def test_feedback_nash_equilibrium_rejects_non_stabilizing_results(monkeypatch, lqgame_ct: LQGame):
+    destabilizing = [LinearStrategy(np.array([[-5.0, 0.0]])), LinearStrategy(np.array([[0.0, -5.0]]))]
+    stabilizing = _policy_iteration(lqgame_ct, initial_strategies=[p.strategy for p in lqgame_ct.players])
+    monkeypatch.setattr("src.gamecore.solver._care_value_iteration", lambda *a, **k: destabilizing, raising=True)
+    monkeypatch.setattr("src.gamecore.solver._policy_iteration", lambda *a, **k: stabilizing, raising=True)
+    assert feedback_nash_equilibrium(lqgame_ct, verbose=False) is stabilizing
+    monkeypatch.setattr("src.gamecore.solver._policy_iteration", lambda *a, **k: destabilizing, raising=True)
+    with pytest.raises(RuntimeError, match="methods to compute feedback Nash strategies"):
+        feedback_nash_equilibrium(lqgame_ct, verbose=False)
