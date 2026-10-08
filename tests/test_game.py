@@ -203,22 +203,37 @@ def test_lqgame_A_cl(strategies: list[LinearStrategy], lqgame: LQGame):
     with pytest.raises(TypeError, match="Strategy 0 must be an instance of LinearStrategy"):
         _ = lqgame.A_cl([object(), strategies[1]])
 
-def test_lqgame_Ms_and_lyapunov_matrices(lqgame: LQGame):
+def test_lqgame_Ms_and_value_matrices(lqgame: LQGame):
     Ms = lqgame.Ms()
     assert len(Ms) == lqgame.N
-    Ps = lqgame.lyapunov_matrices()
+    Ps = lqgame.value_matrices()
     assert len(Ps) == lqgame.N
     for P in Ps:
         assert P.shape == (lqgame.n, lqgame.n)
 
-def test_lqgame_state_covariance(lqgame: LQGame):
-    X = lqgame.state_covariance()
+def test_lqgame_state_correlation(lqgame: LQGame):
+    X = lqgame.state_correlation()
     assert X.shape == (lqgame.n, lqgame.n)
+
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
+def test_lqgame_lyapunov_solutions_match_separate_solves(lqgame: LQGame, time_domain: str):
+    game = LQGame(system=lqgame.system, players=lqgame.players, time_domain=time_domain, check_stability=False)
+    # B = I, so K = A - A_cl places the nonnormal A_cl, stable in both time domains
+    K = game.system.A - np.array([[-0.5, 0.3], [0.0, -0.4]])
+    strategies = [LinearStrategy(K[:1]), LinearStrategy(K[1:])]
+    Ps, X = game.lyapunov_solutions(strategies)
+    assert all(np.allclose(P, P_ref) for P, P_ref in zip(Ps, game.value_matrices(strategies)))
+    assert np.allclose(X, game.state_correlation(strategies))
 
 def test_lqgame_strategies_costs(lqgame: LQGame):
     costs = lqgame.strategies_costs()
     assert len(costs) == lqgame.N
     assert all(np.isfinite(c) for c in costs)
+
+def test_lqgame_strategies_costs_inf_when_unstable(lqgame: LQGame):
+    # K = -2 I moves both closed-loop eigenvalues to the right half plane
+    destabilizing = [LinearStrategy(np.array([[-2.0, 0.0]])), LinearStrategy(np.array([[0.0, -2.0]]))]
+    assert lqgame.strategies_costs(destabilizing) == [np.inf, np.inf]
 
 def test_lqgame_str_contains_sections(lqgame: LQGame):
     s = str(lqgame)

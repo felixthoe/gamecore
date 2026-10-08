@@ -29,5 +29,6 @@ from .factories import (
 from.solver import feedback_nash_equilibrium, feedback_stackelberg_equilibrium
 from .groebner import groebner_feedback_nash_equilibria
 
+from .utils.utils import FactorySamplingError
 from .utils.logger import DataLogger
 from .sweep_runner.runner import SweepRunner

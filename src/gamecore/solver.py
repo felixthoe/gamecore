@@ -6,7 +6,7 @@ from scipy.integrate import solve_ivp
 from .strategy.linear_strategy import LinearStrategy
 from .game.lq_game import LQGame
 
-def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrategy] | None = None, finite_horizon_fallback: bool = False, max_iteration: int = 1000, T: float = 1e7, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
+def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrategy] | None = None, finite_horizon_fallback: bool = False, max_iter: int = 1000, T: float = 1e7, rtol: float = 1e-10, atol: float = 1e-12, verbose=True) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players using different algorithms.
     If the cascaded value iteration fails, it falls back to a simultaenous policy iteration.
@@ -23,7 +23,7 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
         If True, allows fallback to CDRE-based finite horizon simulation if both cascaded value and
         policy iterations fail. Only supported for continuous-time games. Default is False (it often
         takes forever and fails anyway).
-    max_iteration : int, optional
+    max_iter : int, optional
         Maximum number of iterations for convergence of the iterative solution scheme. Default is 1000.
     T : float, optional
         The finite horizon for the backward integration in case of CDRE fallback. Default is 1e7.
@@ -31,6 +31,8 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
         Relative tolerance for convergence check in cascaded policy iteration. Default is 1e-10.
     atol : float, optional
         Absolute tolerance for convergence check in cascaded policy iteration. Default is 1e-12.
+    verbose : bool, optional
+        If True, prints progress and warnings. Default is True.
     Returns
     -------
     list[LinearStrategy]
@@ -51,27 +53,30 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
         return _care_value_iteration(
             game=game,
             initial_strategies=initial_strategies,
-            max_iteration=max_iteration,
+            max_iter=max_iter,
             rtol=rtol,
             atol=atol,
         )
     except (RuntimeError, ValueError) as e:
-        print(f"Nash Solver: Value iteration failed due to: {e}")
-        print("Falling back to Policy iteration...")
+        if verbose:
+            print(f"Nash Solver: Value iteration failed due to: {e}")
+            print("Falling back to Policy iteration...")
         try:
             return _policy_iteration(
                 game=game,
                 initial_strategies=initial_strategies,
-                max_iteration=max_iteration,
+                max_iter=max_iter,
                 rtol=rtol,
                 atol=atol,
             )
         except (RuntimeError, ValueError) as f:
-            print(f"Nash Solver: Policy iteration failed due to: {f}")
+            if verbose:
+                print(f"Nash Solver: Policy iteration failed due to: {f}")
             if not finite_horizon_fallback:
                 raise RuntimeError("Nash Solver: All chosen methods to compute feedback Nash strategies (finite horizon excluded per argument) have failed.")
             else:
-                print("Falling back to CDRE-based finite horizon simulation...")
+                if verbose:
+                    print("Falling back to CDRE-based finite horizon simulation...")
                 try:
                     return _cdre_finite_horizon_simulation(
                         game=game,
@@ -79,11 +84,12 @@ def feedback_nash_equilibrium(game: LQGame, initial_strategies: list[LinearStrat
                         atol=atol
                     )
                 except (RuntimeError, ValueError) as g:
-                    print(f"Nash Solver: CDRE finite horizon simulation failed due to: {g}")
+                    if verbose:
+                        print(f"Nash Solver: CDRE finite horizon simulation failed due to: {g}")
                     raise RuntimeError("Nash Solver: All available methods to compute feedback Nash strategies have failed.")
 
 
-def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], cascaded: bool = False, max_iteration: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
+def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], cascaded: bool = False, max_iter: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players oriented at Algorithm 1 of
     Chen et al (2025) "Multiplayer Cascaded Policy Iteration for Nash Differential Games"
@@ -100,7 +106,7 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
         Either way, they are required to be stabilizing.
     cascaded : bool, optional
         If True, uses cascaded policy iteration. If False, uses simultaneous policy iteration.
-    max_iteration : int, optional
+    max_iter : int, optional
         Maximum number of iterations for convergence. Default is 1000.
     rtol : float, optional
         Relative tolerance for convergence check. Default is 1e-10.
@@ -119,16 +125,16 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
     Rs = [player.cost.R for player in game.players]
 
     # Preliminary Condition: P_1[-1] must be positive definite
-    P_0 = game.lyapunov_matrices(strategies=initial_strategies)[0]
+    P_0 = game.value_matrices(strategies=initial_strategies)[0]
     if not np.all(np.linalg.eigvals(P_0) > 0):
-        raise ValueError("Nash Solver: First Lyapunov matrix not positive definite")
+        raise ValueError("Nash Solver: First value matrix not positive definite")
 
     # Initialization
     Ks = [time_domain.gain_from_riccati(A, Bs[0], Rs[0][(0,0)], P_0)] + [np.zeros_like(B.T) for B in Bs[1:]]
     Ks_old = [K.copy() for K in Ks]
 
     # Iteration until convergence
-    for _ in range(max_iteration):
+    for _ in range(max_iter):
 
         if cascaded: # cascaded policy iteration
             for i in range(game.N):
@@ -161,12 +167,12 @@ def _policy_iteration(game: LQGame, initial_strategies: list[LinearStrategy], ca
             break
         Ks_old = [K.copy() for K in Ks]
     else:
-        raise RuntimeError(f"Feedback Nash strategies did not converge within {max_iteration} iterations")
+        raise RuntimeError(f"Feedback Nash strategies did not converge within {max_iter} iterations")
 
     return [LinearStrategy(K=Ks[i]) for i in range(game.N)]
 
 
-def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy], max_iteration: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
+def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy], max_iter: int | None = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Nash strategies for all players oriented at Algorithm 6 of
     Engwerda (2007) "Algorithms for computing Nash equilibria in deterministic LQ games"
@@ -181,7 +187,7 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
         Initial strategies for the iterative solution scheme.
         If None, uses the current strategies of the game.
         Either way, they are required to be stabilizing.
-    max_iteration : int, optional
+    max_iter : int, optional
         Maximum number of iterations for convergence. Default is 1000.
     rtol : float, optional
         Relative tolerance for convergence check. Default is 1e-10.
@@ -198,8 +204,8 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
     Bs = game.system.Bs
     Rs = [game.players[i].cost.R for i in range(game.N)]
 
-    # Compute initial Lyapunov matrices
-    Ps = game.lyapunov_matrices(strategies=initial_strategies)
+    # Compute initial value matrices
+    Ps = game.value_matrices(strategies=initial_strategies)
 
     # Precompute shared big R matrix
     blocks = []
@@ -221,7 +227,7 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
         return [K_vstack[offsets[i]:offsets[i+1]] for i in range(game.N)]
 
     # Iteration until convergence
-    for _ in range(max_iteration):
+    for _ in range(max_iter):
         Ps_old = [P.copy() for P in Ps]
         for i, player_i in enumerate(game.players):
             Ks = Ks_from_Ps(Ps) # get current Ks from Ps
@@ -233,12 +239,13 @@ def _care_value_iteration(game: LQGame, initial_strategies: list[LinearStrategy]
             Q_i = player_i.cost.Q.copy()
             Q_i += sum(Ks[j].T @ Rs[i][(j,k)] @ Ks[k] for (j,k) in Rs[i] if j != i and k != i)
             Q_i -= sum(sum(Ks[j].T @ Rs[i][(j,i)] @ np.linalg.solve(Rs[i][(i,i)], Rs[i][(i,m)] @ Ks[m]) for (l,m) in Rs[i] if l == i and m != i) for (j,k) in Rs[i] if j != i and k == i)
-            Ps[i] = time_domain.solve_riccati(A_i, Bs[i], Q_i, Rs[i][(i,i)])
+            # the cross-penalty terms make Q_i symmetric only up to rounding, which the Riccati solvers reject
+            Ps[i] = time_domain.solve_riccati(A_i, Bs[i], 0.5 * (Q_i + Q_i.T), Rs[i][(i,i)])
         # Check convergence
         if all(np.allclose(Ps[i], Ps_old[i], rtol=rtol, atol=atol) for i in range(game.N)):
             break
     else:
-        raise RuntimeError(f"Feedback Nash strategies did not converge within {max_iteration} iterations")
+        raise RuntimeError(f"Feedback Nash strategies did not converge within {max_iter} iterations")
 
     # Compute the latest strategies
     K_list = Ks_from_Ps(Ps)
@@ -335,7 +342,7 @@ def _cdre_finite_horizon_simulation(game: LQGame, T: float = 1e7, atol: float = 
     return [LinearStrategy(K=K) for K in Ks_from_Ps(Ps_0)]
 
 
-def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initial_leader_strat: LinearStrategy | None = None, max_iteration: int = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
+def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initial_leader_strat: LinearStrategy | None = None, max_iter: int = 1000, rtol: float = 1e-10, atol: float = 1e-12) -> list[LinearStrategy]:
     """
     Computes the feedback Stackelberg strategies of one equilibrium oriented at
     Nortmann (2025) "Iterative Stackelberg equilibrium finding for linear quadratic differential games"
@@ -350,7 +357,7 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
     initial_leader_strat : LinearStrategy | None, optional
         Initial strategy for the leader player in the iterative solution scheme.
         If None, uses the current strategy of the leader player in the game.
-    max_iteration : int, optional
+    max_iter : int, optional
         Maximum number of iterations for convergence of the iterative solution scheme. Default is 1000.
     rtol : float, optional
         Relative tolerance for convergence check in cascaded policy iteration. Default is 1e-10.
@@ -411,7 +418,7 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
         pass # Implementation of Riccati update if needed in future
 
     leader_strategy_old = initial_leader_strat
-    for _ in range(max_iteration):
+    for _ in range(max_iter):
         # Follower update
         P_follower, follower_strategy = follower_best_response(leader_strategy_old)
         # Leader update
@@ -421,6 +428,6 @@ def feedback_stackelberg_equilibrium(game: LQGame, leader_index: int = 0, initia
             break
         leader_strategy_old = leader_strategy.copy()
     else:
-        raise RuntimeError(f"Feedback Stackelberg strategies did not converge within {max_iteration} iterations")
+        raise RuntimeError(f"Feedback Stackelberg strategies did not converge within {max_iter} iterations")
 
     return [leader_strategy, follower_strategy]

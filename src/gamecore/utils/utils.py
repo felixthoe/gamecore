@@ -7,6 +7,13 @@ from scipy.stats import ortho_group
 from ..time_domain import TimeDomain, resolve_time_domain
 
 
+class FactorySamplingError(RuntimeError):
+    """
+    Raised by the random factories when rejection sampling is exhausted or a sampled instance is
+    numerically unusable. Retrying with a new seed is the intended reaction (see `SweepRunner`).
+    """
+
+
 def is_controllable(A: np.ndarray, B: np.ndarray) -> bool:
     """Check controllability of (A, B) via rank condition."""
     n = A.shape[0]

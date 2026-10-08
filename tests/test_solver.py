@@ -123,13 +123,13 @@ def test_policy_iteration_lyapunov_pd_precondition(lqgame_ct: LQGame, monkeypatc
     def fake_lyap_batch(A_cl, Ms):
         return [np.array([[0.0, 0.0], [0.0, -1.0]])] + [np.eye(A_cl.shape[0]) for _ in Ms[1:]]
     monkeypatch.setattr(lqgame_ct.time_domain, "solve_lyapunov_batch", fake_lyap_batch, raising=True)
-    with pytest.raises(ValueError, match="First Lyapunov matrix not positive definite"):
+    with pytest.raises(ValueError, match="First value matrix not positive definite"):
         _policy_iteration(lqgame_ct, initial_strategies=[p.strategy for p in lqgame_ct.players])
 
 def test_policy_iteration_runtime_error_on_nonconvergence(lqgame_ct: LQGame):
-    # Simplest is to set max_iteration=0 -> triggers runtime error via else branch
+    # Simplest is to set max_iter=0 -> triggers runtime error via else branch
     with pytest.raises(RuntimeError, match="did not converge"):
-        _policy_iteration(lqgame_ct, initial_strategies=[p.strategy for p in lqgame_ct.players], max_iteration=0)
+        _policy_iteration(lqgame_ct, initial_strategies=[p.strategy for p in lqgame_ct.players], max_iter=0)
 
 
 ################################

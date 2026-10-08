@@ -21,6 +21,13 @@ def dummy_run_trial_fn(seed: int, sweep_params: dict, **kwargs) -> str:
     return "success"
 
 
+def primary_seed_fails_trial_fn(seed: int, sweep_params: dict, **kwargs) -> str:
+    # primary seeds lie below 2**31, retry seeds above
+    if seed < 2**31:
+        raise RuntimeError("Deliberate failure on the primary seed")
+    return f"seed={seed}"
+
+
 @pytest.fixture
 def sweep_runner(tmp_path):
     # Sweep over 2 values (1 valid, 1 that triggers an exception)
@@ -35,6 +42,7 @@ def sweep_runner(tmp_path):
         n_trials=2,
         parallel=False,
         is_valid_sweep_fn=None,
+        retry_on_exception=(RuntimeError,),
     )
     return runner
 
@@ -275,10 +283,52 @@ def test_retry_seed_does_not_collide_with_primary_blocks(tmp_path):
         primary_seeds.update(range(seed, seed + n_trials))
 
     retry_seeds = {
-        registry.retry_seed(f"sweep_{i}", trial_idx, attempt)
+        registry.retry_seed((("group", i),), trial_idx, attempt)
         for i in range(20)
         for trial_idx in range(n_trials)
         for attempt in range(3)
     }
 
     assert primary_seeds.isdisjoint(retry_seeds)
+
+
+def test_non_listed_exception_is_not_retried(tmp_path):
+    runner = SweepRunner(
+        experiment_name="test_exp",
+        base_dir=str(tmp_path / "sweep_data"),
+        sweep_space={"param_a": ["fail"], "param_b": [1]},
+        run_trial_fn=dummy_run_trial_fn,
+        n_trials=3,
+        parallel=False,
+        retry_on_exception=(ValueError,),
+    )
+    runner.run()
+
+    (path,) = _result_files(runner.experiment_logger.dir)
+    with open(path, "r") as f:
+        res = json.load(f)
+    assert len(res["exceptions"]) == runner.n_trials
+    assert all(e["attempt"] == 0 and not e["retryable"] for e in res["exceptions"])
+    assert all(entry["outcome"] == "exception" for entry in res["trial_outcomes"])
+
+
+def test_synced_sweeps_retry_with_the_same_seed(tmp_path):
+    runner = SweepRunner(
+        experiment_name="test_exp",
+        base_dir=str(tmp_path / "sweep_data"),
+        sweep_space={"param_a": ["x"], "param_b": [1, 2]},
+        run_trial_fn=primary_seed_fails_trial_fn,
+        n_trials=2,
+        seed_sync_by=["param_b"],
+        parallel=False,
+        retry_on_exception=(RuntimeError,),
+    )
+    runner.run()
+
+    outcomes = []
+    for path in _result_files(runner.experiment_logger.dir):
+        with open(path, "r") as f:
+            outcomes.append([entry["outcome"] for entry in json.load(f)["trial_outcomes"]])
+    assert len(outcomes) == 2
+    assert outcomes[0] == outcomes[1]
+    assert all(o.startswith("seed=") for o in outcomes[0])

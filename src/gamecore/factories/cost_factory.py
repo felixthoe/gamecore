@@ -11,6 +11,7 @@ from ..utils.utils import (
     random_symmetric_matrix,
     random_matrix,
     is_detectable,
+    FactorySamplingError,
 )
 
 def make_random_costs(
@@ -89,7 +90,7 @@ def make_random_costs(
                     Qs.append(Q_i)
                     break
             else:
-                raise RuntimeError(f"Cost Factory: Failed to find a detectable Q_{i} after {max_iter} attempts.")
+                raise FactorySamplingError(f"Cost Factory: Failed to find a detectable Q_{i} after {max_iter} attempts.")
     else:
         raise ValueError(f"Cost Factory: Unknown value for q_i '{q_i}'. Use 'pd' or 'psd'.")
 

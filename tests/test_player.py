@@ -123,31 +123,31 @@ def test_strategy_cost_sigma0_validation(system, strategies, quadratic_cost):
 
 
 ################################
-# lyapunov_matrix behavior and error cases
+# value_matrix behavior and error cases
 ################################
 
 def test_lyapunov_requires_system_or_Acl(strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
     with pytest.raises(ValueError, match="Either system or A_cl must be provided"):
-        _ = p.lyapunov_matrix(strategies=strategies)
+        _ = p.value_matrix(strategies=strategies)
 
 def test_lyapunov_strategies_type_validation(system, quadratic_cost):
     p = LQPlayer(strategy=LinearStrategy(np.array([[1.0, 0.0]])), cost=quadratic_cost, player_idx=0)
     with pytest.raises(TypeError, match="All strategies must be instances of LinearStrategy"):
-        _ = p.lyapunov_matrix(strategies=[object()], system=system)
+        _ = p.value_matrix(strategies=[object()], system=system)
 
 def test_lyapunov_with_system(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
-    P = p.lyapunov_matrix(strategies=strategies, system=system, time_domain="continuous")
+    P = p.value_matrix(strategies=strategies, system=system, time_domain="continuous")
     assert P.shape == (system.n, system.n)
     # Discrete time branch
-    Pd = p.lyapunov_matrix(strategies=strategies, system=system, time_domain="discrete")
+    Pd = p.value_matrix(strategies=strategies, system=system, time_domain="discrete")
     assert Pd.shape == (system.n, system.n)
 
 def test_lyapunov_with_provided_Acl(system, strategies, quadratic_cost):
     p = LQPlayer(strategy=strategies[0], cost=quadratic_cost, player_idx=0)
     Acl = system.A_cl(strategies)
-    P = p.lyapunov_matrix(strategies=strategies, A_cl=Acl, time_domain="continuous")
+    P = p.value_matrix(strategies=strategies, A_cl=Acl, time_domain="continuous")
     assert P.shape == (system.n, system.n)
 
 

@@ -77,11 +77,16 @@ class SweepRunner(ABC):
     max_workers : int, default=None
         Maximum number of worker processes to use for parallel execution.
         If None, uses all available CPU cores minus one.
-    retry_on_exception : bool, default=True
-        Whether to retry a trial with a new seed if an exception occurs.
+    retry_on_exception : tuple[type[BaseException], ...], default=()
+        Exception types after which a trial is retried with a new seed (e.g. rejection-sampling
+        failures such as `FactorySamplingError`). Any other exception is recorded as outcome
+        "exception" and not retried, so it cannot silently bias the sampled trials. Retry seeds
+        depend only on the seed group, so sweeps synced by `seed_sync_by` retry with the same seed.
     max_retries_on_exception : int, default=10
-        Maximum number of attempts for a trial if exceptions occur.
+        Maximum number of attempts for a trial if retryable exceptions occur.
     """
+
+    INTERIM_AGGREGATION_INTERVAL = 30.0  # seconds between rewrites of the interim result files
 
     def __init__(
         self,
@@ -95,7 +100,7 @@ class SweepRunner(ABC):
         seed_sync_by: list = None,
         parallel: bool = True,
         max_workers: int = None,
-        retry_on_exception: bool = True,
+        retry_on_exception: tuple[type[BaseException], ...] = (),
         max_retries_on_exception: int = 10,
     ):
         self.experiment_name = experiment_name
@@ -164,22 +169,41 @@ class SweepRunner(ABC):
 
         if self.parallel:
             print(f"\nRunning in parallel on {self.max_workers} cores...\n")
+            # Spawned workers read these when importing numpy. Multithreaded BLAS on the small
+            # matrices of a trial gives no speedup but oversubscribes the cores across workers.
+            for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+                os.environ.setdefault(var, "1")
             with multiprocessing.Pool(
                 processes=self.max_workers,
                 initializer=_init_worker_logging,
                 initargs=(self._log_path,),
             ) as pool:
-                for sweep_logger in tqdm(pool.imap_unordered(self._run_single_sweep, sweep_args), total=len(sweep_args)):
-                    if sweep_logger is not None:
-                        self._aggregate_results([sweep_logger], final=False)
+                self._collect_results(pool.imap_unordered(self._run_single_sweep, sweep_args), total=len(sweep_args))
         else:
             print("\nRunning sequentially ...\n")
-            for args in tqdm(sweep_args):
-                sweep_logger = self._run_single_sweep(args)
-                if sweep_logger is not None:
-                    self._aggregate_results([sweep_logger], final=False)
+            self._collect_results(map(self._run_single_sweep, sweep_args), total=len(sweep_args))
 
-        self._aggregate_results([], final=True)
+    def _collect_results(self, sweep_loggers, total: int) -> None:
+        """
+        Aggregate completed sweeps as they arrive. Each aggregation rewrites the interim files for
+        all sweeps so far, so it runs at most every `INTERIM_AGGREGATION_INTERVAL` seconds, and
+        once more as the final aggregation.
+
+        Parameters
+        ----------
+        sweep_loggers : iterable of DataLogger | None
+            Loggers of the completed sweeps, in completion order.
+        total : int
+            Number of sweeps, for the progress bar.
+        """
+        pending, last = [], time.perf_counter()
+        for sweep_logger in tqdm(sweep_loggers, total=total):
+            if sweep_logger is not None:
+                pending.append(sweep_logger)
+            if pending and time.perf_counter() - last >= self.INTERIM_AGGREGATION_INTERVAL:
+                self._aggregate_results(pending, final=False)
+                pending, last = [], time.perf_counter()
+        self._aggregate_results(pending, final=True)
 
     def _prepare_experiment_directory(self) -> str:
         """
@@ -339,9 +363,9 @@ class SweepRunner(ABC):
 
     def _create_sweep_args(self) -> list[tuple]:
         """
-        Build the list of (sweep_idx, sweep_params, sweep_seed) tuples for
-        every valid parameter combination, assigning each a deterministic
-        seed via `self.seed_registry`.
+        Build the list of (sweep_idx, sweep_params, sweep_seed, seed_key)
+        tuples for every valid parameter combination, assigning each a
+        deterministic seed via `self.seed_registry`.
         """
         print(f"\nAll parameter combinations: {self.sweep_space.size} (potentially contains invalid combinations)")
         valid_combinations = self.sweep_space.valid_combinations(self.is_valid_sweep_fn)
@@ -357,7 +381,7 @@ class SweepRunner(ABC):
         for sweep_idx, sweep_params in enumerate(valid_combinations):
             seed_key = self.sweep_space.seed_key(sweep_params, seed_vary_by)
             sweep_seed = self.seed_registry.get_or_assign(seed_key)
-            sweep_args.append((sweep_idx, sweep_params, sweep_seed))
+            sweep_args.append((sweep_idx, sweep_params, sweep_seed, seed_key))
 
         return sweep_args
 
@@ -369,21 +393,21 @@ class SweepRunner(ABC):
         Parameters
         ----------
         sweep_args : tuple
-            Tuple of (sweep_idx, sweep_params, sweep_seed).
+            Tuple of (sweep_idx, sweep_params, sweep_seed, seed_key).
 
         Returns
         -------
         DataLogger
             Logger for the sweep results.
         """
-        sweep_idx, sweep_params, sweep_seed = sweep_args
+        sweep_idx, sweep_params, sweep_seed, seed_key = sweep_args
         sweep_logger, sweep_name = self._prepare_sweep_logger(sweep_idx, sweep_params)
         if sweep_name is None:
             return sweep_logger
 
         sweep_hash = os.path.basename(sweep_logger.dir).removeprefix("sweep_")
         sweep_stats, trial_outcomes, trial_durations, exceptions = self._run_all_trials(
-            sweep_idx, sweep_hash, sweep_params, sweep_seed
+            sweep_idx, sweep_hash, sweep_params, sweep_seed, seed_key
         )
 
         self._save_sweep_result(sweep_logger, sweep_idx, sweep_stats, trial_outcomes, trial_durations, exceptions)
@@ -422,9 +446,11 @@ class SweepRunner(ABC):
 
         return sweep_logger, sweep_name
 
-    def _run_all_trials(self, sweep_idx: int, sweep_hash: str, sweep_params: dict, sweep_seed: int) -> tuple:
+    def _run_all_trials(self, sweep_idx: int, sweep_hash: str, sweep_params: dict, sweep_seed: int, seed_key: tuple) -> tuple:
         """
-        Run all trials for a given sweep and collect statistics.
+        Run all trials for a given sweep and collect statistics. A trial is
+        retried with a new seed only after an exception of a type listed in
+        `retry_on_exception`.
 
         Returns
         -------
@@ -441,12 +467,25 @@ class SweepRunner(ABC):
 
         for trial_idx in range(self.n_trials):
             seed = sweep_seed + trial_idx
-            attempts = self.max_retries_on_exception if self.retry_on_exception else 1
+            attempts = self.max_retries_on_exception
 
             outcome, duration, exception_info = None, None, None
             for attempt in range(attempts):
                 outcome, duration, exception_info = self._run_single_trial(seed, sweep_params)
                 if outcome != "exception":
+                    break
+                if not exception_info["retryable"]:
+                    exceptions.append({
+                        "trial": trial_idx,
+                        "attempt": attempt,
+                        "seed": seed,
+                        "timestamp": datetime.now().isoformat(),
+                        **exception_info,
+                    })
+                    self._logger().error(
+                        "sweep=%s trial=%d seed=%d: non-retryable %s",
+                        sweep_hash, trial_idx + 1, seed, exception_info["exception"],
+                    )
                     break
 
                 exceptions.append({
@@ -464,7 +503,7 @@ class SweepRunner(ABC):
                         "sweep=%s trial=%d attempt=%d/%d seed=%d: %s — retrying with new seed",
                         sweep_hash, trial_idx + 1, attempt + 1, attempts, seed, exception_info["exception"],
                     )
-                    seed = self.seed_registry.retry_seed(sweep_hash, trial_idx, attempt)
+                    seed = self.seed_registry.retry_seed(seed_key, trial_idx, attempt)
                 else:
                     if not self.parallel:
                         print(f"❌ Max retries reached for sweep {sweep_idx+1}, trial {trial_idx+1}. "
@@ -508,6 +547,7 @@ class SweepRunner(ABC):
             return "exception", None, {
                 "exception": str(e),
                 "traceback": traceback.format_exc(),
+                "retryable": isinstance(e, self.retry_on_exception),
             }
 
     def _save_sweep_result(

@@ -4,7 +4,7 @@ import numpy as np
 
 from ..system.linear_system import LinearSystem
 from ..time_domain import TimeDomain, resolve_time_domain
-from ..utils.utils import controls_eigenvalue, sparsify, unstable_eigenvalues
+from ..utils.utils import FactorySamplingError, controls_eigenvalue, sparsify, unstable_eigenvalues
 
 
 def _apply_target_scaling(A: np.ndarray, Bs: list[np.ndarray], target_spectral_radius: float | None, target_input_norm: float | None) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -16,6 +16,18 @@ def _apply_target_scaling(A: np.ndarray, Bs: list[np.ndarray], target_spectral_r
     if target_input_norm is not None:
         Bs = [B * (target_input_norm / max(np.linalg.norm(B, ord=2), 1e-12)) for B in Bs]
     return A, Bs
+
+
+def _sparse_full_rank_input(n: int, m: int, sparsity: float, amplitude: float, rng: np.random.Generator) -> np.ndarray:
+    """
+    Random sparse (n, m) input matrix whose nonzero pattern contains a random transversal of
+    length min(n, m), so it has full rank min(n, m) almost surely despite `sparsity`. Rejection
+    sampling for full rank is infeasible for large m at high sparsity.
+    """
+    mask = rng.random((n, m)) > sparsity
+    k = min(n, m)
+    mask[rng.permutation(n)[:k], rng.permutation(m)[:k]] = True
+    return amplitude * rng.standard_normal((n, m)) * mask
 
 
 def make_random_system(
@@ -32,7 +44,8 @@ def make_random_system(
     seed: int | None = None,
 ) -> LinearSystem:
     """
-    Generates a random stabilizable linear system.
+    Generates a random stabilizable linear system in which every B_i has full rank
+    min(n, m_i), i.e. no player has redundant input channels (e.g. zero columns from `sparsity`).
 
     Parameters
     ----------
@@ -50,7 +63,8 @@ def make_random_system(
         Whether the game evolves in continuous or discrete time.
 
     sparsity : float
-        Fraction of zero elements to introduce in A and B matrices.
+        Fraction of zero elements to introduce in A and B matrices (for B_i up to the entries
+        that keep it at full rank).
 
     amplitude_A : float | None
         Amplitude for the random entries in the A matrix. If None,
@@ -82,8 +96,8 @@ def make_random_system(
 
     Raises
     ------
-    RuntimeError
-        If no stabilizable system is found.
+    FactorySamplingError
+        If no stabilizable system with full-rank B_i is found within `max_iter` attempts.
     """
     time_domain = resolve_time_domain(time_domain)
     rng = np.random.default_rng(seed)
@@ -92,8 +106,10 @@ def make_random_system(
 
     for _ in range(max_iter):
         A = sparsify(amplitude_A*rng.standard_normal((n, n)), sparsity, rng)
-        Bs = [sparsify(amplitude_B*rng.standard_normal((n, m)), sparsity, rng) for m in ms]
+        Bs = [_sparse_full_rank_input(n, m, sparsity, amplitude_B, rng) for m in ms]
         A, Bs = _apply_target_scaling(A, Bs, target_spectral_radius, target_input_norm)
+        if any(np.linalg.matrix_rank(B) < min(B.shape) for B in Bs):
+            continue
 
         if stabilizability == "joint":
             B_total = np.hstack(Bs)
@@ -106,4 +122,4 @@ def make_random_system(
         else:
             raise ValueError(f"System Factory: Unknown mode for stabilizability: '{stabilizability}'. Use 'joint' or 'individual'.")
 
-    raise RuntimeError(f"System Factory: Failed to generate a stabilizable system for '{stabilizability}' stabilizability after {max_iter} trials.")
+    raise FactorySamplingError(f"System Factory: Failed to generate a stabilizable system with full-rank B_i for '{stabilizability}' stabilizability after {max_iter} trials.")

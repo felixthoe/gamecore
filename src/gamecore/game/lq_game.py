@@ -130,10 +130,10 @@ class LQGame(BaseGame):
         """
         return [player.cost.M(strategies=self.strategies) for player in self.players]
 
-    def lyapunov_matrices(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> list[np.ndarray]:
+    def value_matrices(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> list[np.ndarray]:
         """
-        Computes the Lyapunov matrices for all players under the given or current strategies.
-        Wrapper with central computation of the closed-loop system matrix A_cl.
+        Computes the value matrices P_i (J_i = tr(P_i Sigma0)) of all players under the given or
+        current strategies. Wrapper with central computation of the closed-loop system matrix A_cl.
 
         Parameters
         ----------
@@ -145,7 +145,7 @@ class LQGame(BaseGame):
         Returns
         -------
         list[np.ndarray]
-            List of Lyapunov matrices P_i for each player.
+            List of value matrices P_i for each player.
         """
         if strategies is None:
             strategies = self.strategies
@@ -155,9 +155,10 @@ class LQGame(BaseGame):
         Ms = [player.M(strategies) for player in self.players]
         return self.time_domain.solve_lyapunov_batch(A_cl, Ms)
 
-    def state_covariance(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> np.ndarray:
+    def state_correlation(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> np.ndarray:
         """
-        Computes the state covariance matrix X under the given or current strategies.
+        Computes the state correlation matrix X = E[int x x^T] under the given or current
+        strategies.
 
         Parameters
         ----------
@@ -169,7 +170,7 @@ class LQGame(BaseGame):
         Returns
         -------
         np.ndarray
-            State covariance matrix X.
+            State correlation matrix X.
         """
         if strategies is None:
             strategies = self.strategies
@@ -177,9 +178,34 @@ class LQGame(BaseGame):
             A_cl = self.system.A_cl(strategies)
         return self.time_domain.solve_lyapunov(A_cl.T, self.Sigma0)
 
+    def lyapunov_solutions(self, strategies: list[LinearStrategy] | None = None, A_cl: np.ndarray | None = None) -> tuple[list[np.ndarray], np.ndarray]:
+        """
+        Computes the value matrices P_i of all players and the state correlation matrix X
+        under the given or current strategies, sharing one factorization of A_cl.
+
+        Parameters
+        ----------
+        strategies : list[LinearStrategy], optional
+            List of strategies for all players. If None, uses the current strategies.
+        A_cl : np.ndarray, optional
+            Precomputed closed-loop system matrix. If None, computed from `strategies`.
+
+        Returns
+        -------
+        tuple[list[np.ndarray], np.ndarray]
+            List of value matrices P_i for each player, and the state correlation matrix X.
+        """
+        if strategies is None:
+            strategies = self.strategies
+        if A_cl is None:
+            A_cl = self.system.A_cl(strategies)
+        Ms = [player.M(strategies) for player in self.players]
+        *Ps, X = self.time_domain.solve_lyapunov_batch(A_cl, Ms, [self.Sigma0])
+        return Ps, X
+
     def strategies_costs(self, strategies: list[LinearStrategy] | None = None) -> list[float]:
         """
-        Computes total cost for all players under the current Linear Strategies.
+        Computes total cost for all players under the given or current Linear Strategies.
         Wrapper with central computation of the closed-loop system matrix A_cl.
 
         Parameters
@@ -190,11 +216,14 @@ class LQGame(BaseGame):
         Returns
         -------
         list[float]
-            List of total costs for each player.
+            List of total costs for each player; `inf` for all players if the closed loop is not
+            stable (the Lyapunov solution then exists but is no cost).
         """
         strategies = strategies if strategies is not None else self.strategies
 
         A_cl = self.system.A_cl(strategies)
+        if not self.time_domain.is_stable(eigvals(A_cl)):
+            return [np.inf] * self.N
         Ms = [player.M(strategies) for player in self.players]
         Ps = self.time_domain.solve_lyapunov_batch(A_cl, Ms)
         return [float(np.trace(P_i @ self.Sigma0)) for P_i in Ps]

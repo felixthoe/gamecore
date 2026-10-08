@@ -112,11 +112,15 @@ class QuadraticCost(BaseCost):
         np.ndarray
             Combined cost matrix M_i.
         """
+        # M_i = Q_i + K^T R_i K with stacked K = [K_1; ...; K_N] and block matrix R_i = [R_{i,jk}],
+        # assembled per call so that in-place changes of `self.R` take effect
         Ks = [p.K for p in strategies]
-        M_i = self.Q.copy()
+        offsets = np.cumsum([0] + [K.shape[0] for K in Ks])
+        R = np.zeros((offsets[-1], offsets[-1]))
         for (j, k), R_jk in self.R.items():
-            M_i += Ks[j].T @ R_jk @ Ks[k]
-        return M_i
+            R[offsets[j]:offsets[j + 1], offsets[k]:offsets[k + 1]] = R_jk
+        K = np.vstack(Ks)
+        return self.Q + K.T @ R @ K
 
     def copy(self) -> "QuadraticCost":
         """
