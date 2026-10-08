@@ -77,7 +77,7 @@ class LQPlayer(BasePlayer):
             if Sigma0.shape != (n, n):
                 raise ValueError(f"Sigma0 must be a square matrix of shape ({n}, {n}).")
 
-        P_i = self.lyapunov_matrix(strategies, system=system, time_domain=time_domain)
+        P_i = self.value_matrix(strategies, system=system, time_domain=time_domain)
 
         return np.trace(P_i @ Sigma0)
 
@@ -116,7 +116,7 @@ class LQPlayer(BasePlayer):
         """
         return self.cost.M(strategies)
     
-    def lyapunov_matrix(
+    def value_matrix(
         self,
         strategies: list[LinearStrategy],
         system: LinearSystem | None = None,
@@ -124,7 +124,7 @@ class LQPlayer(BasePlayer):
         time_domain: str | TimeDomain = "continuous"
     ) -> np.ndarray:
         """
-        Computes the Lyapunov matrix P_i for the player under the given Linear Strategies.
+        Computes the value matrix P_i (J_i = tr(P_i Sigma0)) for the player under the given Linear Strategies.
         Either the system or the closed-loop system matrix A_cl must be provided.
 
         Parameters
@@ -143,7 +143,7 @@ class LQPlayer(BasePlayer):
         Returns
         -------
         np.ndarray
-            Lyapunov matrix P_i.
+            Value matrix P_i.
         """
         if system is None and A_cl is None:
             raise ValueError("Either system or A_cl must be provided.")

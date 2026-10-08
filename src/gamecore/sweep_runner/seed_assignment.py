@@ -68,18 +68,21 @@ class SeedRegistry:
             self._next_id += 1
         return self._groups[key_repr]
 
-    def retry_seed(self, sweep_hash: str, trial_idx: int, attempt: int) -> int:
+    def retry_seed(self, seed_key: tuple, trial_idx: int, attempt: int) -> int:
         """
         Deterministic seed for a retry attempt, derived from a hash of
-        `(sweep_hash, trial_idx, attempt)` and offset into a range far above
+        `(seed_key, trial_idx, attempt)` and offset into a range far above
         any primary seed block, so it cannot collide with another sweep's
-        seeds. Needs no shared mutable counter, so it stays safe to call
-        independently from parallel worker processes.
+        seeds. Depends only on the seed group, so sweeps synced by
+        `seed_sync_by` retry with the same seed. Needs no shared mutable
+        counter, so it stays safe to call independently from parallel worker
+        processes.
 
         Parameters
         ----------
-        sweep_hash : str
-            Content hash of the sweep this trial belongs to.
+        seed_key : tuple
+            Seed-group key of the sweep this trial belongs to, as produced by
+            `SweepSpace.seed_key`.
         trial_idx : int
             Index of the trial within its sweep.
         attempt : int
@@ -90,7 +93,7 @@ class SeedRegistry:
         int
             Seed to use for this retry attempt.
         """
-        digest = hashlib.blake2b(f"{sweep_hash}:{trial_idx}:{attempt}".encode(), digest_size=8).digest()
+        digest = hashlib.blake2b(f"{self._key_repr(seed_key)}:{trial_idx}:{attempt}".encode(), digest_size=8).digest()
         offset = int.from_bytes(digest, "big") % (2**31)
         return self.base_seed + 2**31 + offset
 

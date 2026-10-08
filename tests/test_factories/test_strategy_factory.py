@@ -77,6 +77,23 @@ def test_make_random_strategies_modes_are_stabilizing(
     assert _is_closed_loop_stable(system, strategies, time_domain)
 
 
+@pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
+def test_random_pole_placement_keeps_uncontrollable_mode(time_domain: str) -> None:
+    """The stable, uncontrollable third state must keep its eigenvalue; placing it anyway used to
+    return arbitrarily large gains."""
+    a_u = -0.7 if time_domain == "continuous" else 0.3
+    A = np.array([[0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 0.0, a_u]])
+    B1 = np.array([[0.0], [1.0], [0.0]])
+    B2 = np.array([[1.0], [1.0], [0.0]])
+    system = LinearSystem(A=A, Bs=[B1, B2])
+    strategies = make_random_strategies(system=system, time_domain=time_domain, strategy_init="random_pole_placement", seed=SEED)
+    K = np.vstack([s.K for s in strategies])
+    eigs = np.linalg.eigvals(A - np.hstack([B1, B2]) @ K)
+    assert np.min(np.abs(eigs - a_u)) < 1e-8
+    assert np.linalg.norm(K) <= 1e3
+    assert _is_closed_loop_stable(system, strategies, time_domain)
+
+
 def test_random_bisection_is_not_near_optimal(differential_system: LinearSystem) -> None:
     """random_bisection should differ substantially from the near-optimal joint_lqr gain, not be a
     lightly-perturbed copy of it."""

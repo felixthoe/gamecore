@@ -9,7 +9,7 @@ from ..cost.quadratic_cost import QuadraticCost
 from ..strategy.linear_strategy import LinearStrategy
 from ..system.linear_system import LinearSystem
 from ..time_domain import TimeDomain, resolve_time_domain
-from ..utils.utils import is_stabilizable
+from ..utils.utils import FactorySamplingError, is_stabilizable
 
 
 def make_lqr_strategy(
@@ -99,42 +99,71 @@ def _sample_stable_poles(n: int, time_domain: TimeDomain, rng: np.random.Generat
     return np.array(poles[:n])
 
 
-def _random_pole_placement_gains(system: LinearSystem, time_domain: TimeDomain, rng: np.random.Generator, pole_scale: float, margin: float, max_attempts: int = 5) -> list[np.ndarray] | None:
+def _controllable_subspace(A: np.ndarray, B: np.ndarray, rtol: float = 1e-10) -> np.ndarray:
     """
-    Realizes a random target spectrum at least `margin` inside the stable region via centralized
-    pole placement, re-verifying the same margin post-hoc since `place_poles`' internal robustness
-    optimization can realize gains somewhat off-target without producing a wrong pole assignment.
-    Returns None if no attempt succeeds, so the caller can fall back to `_random_bisection_gains`.
+    Orthonormal basis V (n, n_c) of the controllable subspace of (A, B), built as an orthonormalized
+    Krylov sequence span{B, AB, A^2 B, ...}. Uncontrollable modes (e.g. from sparse A, B) cannot be
+    moved by any gain, so pole placement must leave them out.
+    """
+    n = A.shape[0]
+    tol = rtol * max(1.0, np.linalg.norm(A, 2), np.linalg.norm(B, 2))
+    V = np.zeros((n, 0))
+    W = B
+    for _ in range(n):
+        W = W - V @ (V.T @ W)
+        U, s, _ = np.linalg.svd(W, full_matrices=False)
+        new = U[:, s > tol]
+        if new.shape[1] == 0:
+            break
+        V = np.hstack([V, new])
+        W = A @ new
+    return V
+
+
+def _random_pole_placement_gains(system: LinearSystem, time_domain: TimeDomain, rng: np.random.Generator, pole_scale: float, margin: float, max_gain_norm: float, max_attempts: int = 20) -> list[np.ndarray]:
+    """
+    Realizes a random target spectrum at least `margin` inside the stable region for the
+    controllable part (A_c, B_c) = (V^T A V, V^T B) via centralized pole placement; uncontrollable
+    eigenvalues stay where they are. The margin is re-verified post-hoc on the controllable block,
+    since `place_poles`' internal robustness optimization can realize gains somewhat off-target.
+    Targets are resampled until the gain norm is at most `max_gain_norm`.
     """
     B_total = np.hstack(system.Bs)
+    V = _controllable_subspace(system.A, B_total)
+    offsets = np.cumsum([0] + system.ms)
+    if V.shape[1] == 0:
+        return [np.zeros((m_i, system.n)) for m_i in system.ms]
+    A_c = V.T @ system.A @ V
+    B_c = V.T @ B_total
+    # Players sharing input directions (or more inputs than controllable states) make B_c column-
+    # rank deficient, which `place_poles` rejects; place with a full-column-rank basis B_r of
+    # range(B_c) instead and map back via B_c W_k = B_r.
+    U, s, Wt = np.linalg.svd(B_c, full_matrices=False)
+    k = int(np.sum(s > 1e-10 * s[0]))
+    B_r = U[:, :k] * s[:k]
     for _ in range(max_attempts):
-        poles = _sample_stable_poles(system.n, time_domain, rng, pole_scale, margin)
+        poles = _sample_stable_poles(V.shape[1], time_domain, rng, pole_scale, margin)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                result = place_poles(system.A, B_total, poles, method="YT")
+                K_c = Wt[:k].T @ place_poles(A_c, B_r, poles, method="YT").gain_matrix
         except ValueError:
             continue
-        K_total = result.gain_matrix
-        F = system.A - B_total @ K_total
-        if time_domain.is_stable(np.linalg.eigvals(F), margin=margin):
-            offsets = np.cumsum([0] + system.ms)
+        if not time_domain.is_stable(np.linalg.eigvals(A_c - B_c @ K_c), margin=margin):
+            continue
+        K_total = K_c @ V.T
+        if np.linalg.norm(K_total) <= max_gain_norm:
             return [K_total[offsets[i]:offsets[i + 1]] for i in range(system.N)]
-    return None
+    raise FactorySamplingError(f"Strategy Factory: random pole placement found no gain with margin >= {margin} and norm <= {max_gain_norm} after {max_attempts} attempts.")
 
 
-def _random_bisection_gains(system: LinearSystem, time_domain: TimeDomain, rng: np.random.Generator, scale: float, margin: float, max_directions: int = 50, bracket_points: int = 25, bisection_steps: int = 10) -> list[np.ndarray]:
+def _random_bisection_gains(system: LinearSystem, time_domain: TimeDomain, rng: np.random.Generator, scale: float, margin: float, max_gain_norm: float, max_directions: int = 1000, bracket_points: int = 25, bisection_steps: int = 10) -> list[np.ndarray]:
     """
     Finds certified-stabilizing gains that are not near-optimal: draws one random direction per
-    player, scans a log-spaced grid from K=0 to bracket a transition into "stable by at least
-    `margin`", then bisects a bounded number of steps onto that transition. Bisecting on a margin
-    floor rather than on the bare stable/unstable boolean matters: the raw boolean crossing can sit
-    anywhere in eigenvalue-space, so a fixed number of scale-space bisection steps gives no control
-    over how close the accepted point ends up to the true boundary -- it can land within machine
-    epsilon of marginal stability purely by chance, which is exactly the initial condition an
-    eta_min^-2 vanilla-gradient blowup needs to make the ODE solver fail at t=0. If a direction
-    never reaches the margin across the tested range, the largest tested (still-margin-stable,
-    non-trivial) gain is itself a valid answer.
+    player, scans a log-spaced grid from K=0 up to gain norm `max_gain_norm` to bracket a
+    transition of "stable by at least `margin`", then bisects a bounded number of steps onto that
+    transition and returns its stable side. Directions without a transition inside the scanned 
+    range are rejected.
     """
     ms = system.ms
 
@@ -148,6 +177,7 @@ def _random_bisection_gains(system: LinearSystem, time_domain: TimeDomain, rng: 
         direction = [rng.normal(size=(m_i, system.n)) for m_i in ms]
         direction = [D / np.linalg.norm(D) for D in direction]
         scales = scale * np.logspace(-3, 3, bracket_points)
+        scales = scales[scales * np.sqrt(len(ms)) <= max_gain_norm]
         prev_s, prev_stable = 0.0, stable_at([0 * D for D in direction])
         lo = hi = None
         for s in scales:
@@ -157,78 +187,28 @@ def _random_bisection_gains(system: LinearSystem, time_domain: TimeDomain, rng: 
                 break
             prev_s, prev_stable = s, st
         if hi is None:
-            if prev_stable:
-                return [prev_s * D for D in direction]
             continue
         for _ in range(bisection_steps):
             mid = 0.5 * (lo + hi)
             lo, hi = (lo, mid) if stable_at([mid * D for D in direction]) else (mid, hi)
         return [hi * D for D in direction]
-    raise RuntimeError(f"Strategy Factory: no stabilizing direction found after {max_directions} tries.")
-
-
-def _random_gains_with_fallback(
-    system: LinearSystem,
-    time_domain: TimeDomain,
-    rng: np.random.Generator,
-    strategy_init: str,
-    pole_scale: float,
-    bisection_scale: float,
-    amplitude: float,
-    margin: float,
-) -> list[np.ndarray]:
-    """
-    Tries `strategy_init`'s own method first, falls back through the other random method, and
-    finally to `joint_lqr` -- mathematically guaranteed to succeed for any stabilizable system,
-    though its Riccati solver can still occasionally fail numerically on a near-critical system
-    (smallest Hautus-rank singular value close to zero), which is let through as a `RuntimeError`
-    since there is no further fallback to offer. Warns when it has to reach `joint_lqr`, since
-    that silently trades a deliberately-bad starting point for a near-optimal one.
-    """
-    if strategy_init == "random_bisection":
-        try:
-            return _random_bisection_gains(system, time_domain, rng, bisection_scale, margin)
-        except RuntimeError:
-            pass
-        Ks = _random_pole_placement_gains(system, time_domain, rng, pole_scale, margin)
-    else:
-        Ks = _random_pole_placement_gains(system, time_domain, rng, pole_scale, margin)
-        if Ks is None:
-            try:
-                Ks = _random_bisection_gains(system, time_domain, rng, bisection_scale, margin)
-            except RuntimeError:
-                Ks = None
-
-    if Ks is not None:
-        return Ks
-
-    warnings.warn(
-        f"Strategy Factory: {strategy_init} and its fallback both found no gain with margin >= "
-        f"{margin}; falling back to joint_lqr (near-optimal, not a deliberately-bad starting "
-        "point) for this game.", RuntimeWarning, stacklevel=3,
-    )
-    try:
-        return _joint_lqr_gains(system, time_domain, amplitude)
-    except np.linalg.LinAlgError as e:
-        raise RuntimeError(
-            f"Strategy Factory: no method (including the joint_lqr fallback) could produce a "
-            f"stabilizing gain with margin >= {margin} for this system: {e}"
-        ) from e
+    raise FactorySamplingError(f"Strategy Factory: random bisection found no direction with a margin-{margin} transition below gain norm {max_gain_norm} after {max_directions} tries.")
 
 
 def make_random_strategies(
     system: LinearSystem,
     time_domain: str | TimeDomain = "continuous",
-    strategy_init: Literal["joint_lqr", "random_pole_placement", "random_bisection"] = "random_bisection",
+    strategy_init: Literal["joint_lqr", "random_pole_placement", "random_bisection"] = "random_pole_placement",
     amplitude: float = 1.0,
     pole_scale: float = 1.0,
     bisection_scale: float = 1.0,
     margin: float = 0.05,
+    max_gain_norm: float = 1e3,
     seed: int | None = None,
 ) -> list[LinearStrategy]:
     """
     Generates initial strategies (gain matrices) for all players, all guaranteed jointly
-    stabilizing.
+    stabilizing. Each method either succeeds or raises `FactorySamplingError`.
 
     Parameters
     ----------
@@ -240,8 +220,8 @@ def make_random_strategies(
         How to generate the initial gains:
           - "joint_lqr": deterministic, near-optimal. Stacks all players into one super-player
             and solves a single Riccati equation with a fixed dummy cost.
-          - "random_pole_placement": realizes a random target closed-loop spectrum via
-            centralized pole placement; falls back to "random_bisection" if placement fails.
+          - "random_pole_placement": realizes a random target spectrum for the controllable part
+            of the closed loop via centralized pole placement.
           - "random_bisection": one random direction per player, scaled up to just inside the
             stable region. Certified-stabilizing but deliberately not near-optimal.
     amplitude : float
@@ -251,11 +231,12 @@ def make_random_strategies(
     bisection_scale : float
         Search-direction scale, used by "random_bisection".
     margin : float
-        Minimum required `TimeDomain.stability_margin` of the resulting closed loop, used by
-        "random_pole_placement" and "random_bisection" (ignored by "joint_lqr", whose Riccati
-        solution is generically well inside the stable region already). Guards against gains
-        that are technically stabilizing but sit close enough to the boundary that the adaptation
-        dynamics' eta_min^-2 blowup makes them numerically unusable as a starting point.
+        Minimum required `TimeDomain.stability_margin` of the placed (resp. bisected) closed loop,
+        used by "random_pole_placement" and "random_bisection" (ignored by "joint_lqr", whose
+        Riccati solution is generically well inside the stable region already).
+    max_gain_norm : float
+        Upper bound on the Frobenius norm of the stacked gain, used by "random_pole_placement"
+        and "random_bisection"; larger samples are rejected and resampled.
     seed : int, optional
         Random seed for reproducibility.
 
@@ -271,9 +252,14 @@ def make_random_strategies(
         raise RuntimeError("Strategy Factory: System is not (jointly) stabilizable.")
 
     if strategy_init == "joint_lqr":
-        Ks = _joint_lqr_gains(system, time_domain, amplitude)
-    elif strategy_init in ("random_pole_placement", "random_bisection"):
-        Ks = _random_gains_with_fallback(system, time_domain, rng, strategy_init, pole_scale, bisection_scale, amplitude, margin)
+        try:
+            Ks = _joint_lqr_gains(system, time_domain, amplitude)
+        except np.linalg.LinAlgError as e:
+            raise FactorySamplingError(f"Strategy Factory: joint_lqr Riccati solve failed on a near-critical system: {e}") from e
+    elif strategy_init == "random_pole_placement":
+        Ks = _random_pole_placement_gains(system, time_domain, rng, pole_scale, margin, max_gain_norm)
+    elif strategy_init == "random_bisection":
+        Ks = _random_bisection_gains(system, time_domain, rng, bisection_scale, margin, max_gain_norm)
     else:
         raise ValueError(f"Strategy Factory: unknown strategy_init '{strategy_init}'.")
 

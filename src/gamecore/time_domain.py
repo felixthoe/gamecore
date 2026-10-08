@@ -4,8 +4,9 @@ from abc import ABC, abstractmethod
 import warnings
 import numpy as np
 from scipy.linalg import (
+    lu_factor,
+    lu_solve,
     schur,
-    solve,
     solve_continuous_are,
     solve_continuous_lyapunov,
     solve_discrete_are,
@@ -64,13 +65,26 @@ class TimeDomain(ABC):
         """
 
     @abstractmethod
-    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray]) -> list[np.ndarray]:
+    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray], adjoint_Ms: list[np.ndarray] = ()) -> list[np.ndarray]:
         """
-        Solve `solve_lyapunov(A_cl, M)` for every M in `Ms`, sharing the same A_cl. Reuses the
-        matrix decomposition that dominates a single solve (Schur for continuous, the Kronecker
-        system's factorization for discrete) across all of them, instead of repeating it once per
-        M as a naive per-M loop would. Worthwhile whenever multiple players' cost-to-go matrices
-        are needed for the same closed loop, e.g. `LQGame.lyapunov_matrices`.
+        Solve `solve_lyapunov(A_cl, M)` for every M in `Ms` and the adjoint equation
+        `solve_lyapunov(A_cl.T, M)` for every M in `adjoint_Ms`, with one matrix decomposition of
+        A_cl (Schur for continuous, LU of the Kronecker system for discrete) shared by all solves.
+
+        Parameters
+        ----------
+        A_cl : np.ndarray
+            Closed-loop system matrix.
+        Ms : list[np.ndarray]
+            Forcing terms of the cost-to-go equations, e.g. the players' M_i for their value
+            matrices P_i.
+        adjoint_Ms : list[np.ndarray], optional
+            Forcing terms of the adjoint equations, e.g. Sigma0 for the state correlation matrix X.
+
+        Returns
+        -------
+        list[np.ndarray]
+            Solutions for `Ms`, followed by those for `adjoint_Ms`.
         """
 
     @abstractmethod
@@ -109,21 +123,26 @@ class ContinuousTimeDomain(TimeDomain):
     def solve_lyapunov(self, A_cl: np.ndarray, M: np.ndarray) -> np.ndarray:
         return solve_continuous_lyapunov(A_cl.T, -M)
 
-    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray]) -> list[np.ndarray]:
+    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray], adjoint_Ms: list[np.ndarray] = ()) -> list[np.ndarray]:
+        # A_cl^T = u r u^H turns A_cl^T P + P conj(A_cl) = -M into r Y + Y r^H = -u^H M u with
+        # P = u Y u^H. The adjoint equation A_cl X + X A_cl^H = -M is solved in its conjugate
+        # form conj(A_cl) X' + X' A_cl^T = -conj(M), i.e. r^H Y + Y r = -u^H conj(M) u with
+        # X' = u Y u^H and X = conj(X')
         r, u = schur(A_cl.T, output="real")
-        trsyl = get_lapack_funcs("trsyl", (r, Ms[0]))
-        tranb = "C" if np.iscomplexobj(A_cl) or any(np.iscomplexobj(M) for M in Ms) else "T"
+        trsyl = get_lapack_funcs("trsyl", (r, *Ms, *adjoint_Ms))
+        transpose = "C" if np.iscomplexobj(A_cl) or any(np.iscomplexobj(M) for M in [*Ms, *adjoint_Ms]) else "T"
         results = []
-        for M in Ms:
-            f = u.conj().T @ (-M) @ u
-            y, scale, info = trsyl(r, r, f, tranb=tranb)
+        for M, adjoint in [(M, False) for M in Ms] + [(M, True) for M in adjoint_Ms]:
+            f = u.conj().T @ (-(M.conj() if adjoint else M)) @ u
+            y, scale, info = trsyl(r, r, f, trana=transpose if adjoint else "N", tranb="N" if adjoint else transpose)
             if info < 0:
                 raise ValueError(f'?TRSYL exited with illegal value in argument number {-info}.')
             if info == 1:
                 warnings.warn('Input "A_cl" has an eigenvalue pair whose sum is very close to or '
                                'exactly zero. The solution is obtained via perturbing the coefficients.',
                                RuntimeWarning, stacklevel=2)
-            results.append(u @ (y * scale) @ u.conj().T)
+            X = u @ (y * scale) @ u.conj().T
+            results.append(X.conj() if adjoint else X)
         return results
 
     def solve_riccati(self, A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray) -> np.ndarray:
@@ -152,16 +171,20 @@ class DiscreteTimeDomain(TimeDomain):
     def solve_lyapunov(self, A_cl: np.ndarray, M: np.ndarray) -> np.ndarray:
         return solve_discrete_lyapunov(A_cl.T, M)
 
-    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray]) -> list[np.ndarray]:
+    def solve_lyapunov_batch(self, A_cl: np.ndarray, Ms: list[np.ndarray], adjoint_Ms: list[np.ndarray] = ()) -> list[np.ndarray]:
         # unconditionally uses scipy's "direct" (Kronecker) method rather than switching to
         # "bilinear" past n=10 the way scipy's own solve_discrete_lyapunov does -- state
         # dimensions here stay well under that, and "direct" is exactly what scipy would pick
-        # anyway; revisit if n grows, batching the same way over bilinear's shared Schur-of-B
+        # anyway; revisit if n grows, batching the same way over bilinear's shared Schur-of-B.
+        # The adjoint system I - kron(A_cl, conj(A_cl)) is the plain transpose of `lhs`.
         n = A_cl.shape[0]
-        lhs = np.eye(n * n) - np.kron(A_cl.T, A_cl.T.conj())
-        rhs = np.column_stack([M.flatten() for M in Ms])
-        x = solve(lhs, rhs)
-        return [np.reshape(x[:, i], (n, n)) for i in range(len(Ms))]
+        lu = lu_factor(np.eye(n * n) - np.kron(A_cl.T, A_cl.T.conj()))
+        results = []
+        for Ns, trans in [(Ms, 0), (adjoint_Ms, 1)]:
+            if len(Ns):
+                x = lu_solve(lu, np.column_stack([N.flatten() for N in Ns]), trans=trans)
+                results += [np.reshape(x[:, i], (n, n)) for i in range(len(Ns))]
+        return results
 
     def solve_riccati(self, A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray) -> np.ndarray:
         return solve_discrete_are(A, B, Q, R)
