@@ -8,19 +8,54 @@ from ..time_domain import TimeDomain, resolve_time_domain
 from ..utils.utils import (
     random_PSD_matrix,
     random_PD_matrix,
-    random_symmetric_matrix,
-    random_matrix,
     is_detectable,
     FactorySamplingError,
 )
+
+
+def _psd_power(M: np.ndarray, p: float) -> np.ndarray:
+    """Power M^p of a symmetric positive semidefinite matrix via its eigendecomposition."""
+    w, V = np.linalg.eigh(M)
+    return (V * np.clip(w, 0.0, None) ** p) @ V.T
+
+
+def _cross_terms(blocks: list[np.ndarray], rng: np.random.Generator) -> dict[tuple[int, int], np.ndarray]:
+    """
+    Off-diagonal blocks (j, k), j != k, of R = B C B with B = blockdiag(blocks[j]^(1/2)) and C the
+    block correlation matrix of a random Wishart matrix W = G G^T, C_jk = W_jj^(-1/2) W_jk
+    W_kk^(-1/2). R is positive semidefinite and has the diagonal blocks `blocks`.
+
+    Parameters
+    ----------
+    blocks : list[np.ndarray]
+        Positive semidefinite diagonal blocks R_jj.
+    rng : np.random.Generator
+        Random number generator.
+
+    Returns
+    -------
+    dict[tuple[int, int], np.ndarray]
+        The blocks R_jk for j != k.
+    """
+    offsets = np.cumsum([0] + [block.shape[0] for block in blocks])
+    G = rng.standard_normal((offsets[-1], offsets[-1]))
+    W = G @ G.T
+    part = lambda j, k: W[offsets[j]:offsets[j + 1], offsets[k]:offsets[k + 1]]
+    roots = [_psd_power(block, 0.5) for block in blocks]
+    inverse_roots = [_psd_power(part(j, j), -0.5) for j in range(len(blocks))]
+    cross = {}
+    for j in range(len(blocks)):
+        for k in range(j + 1, len(blocks)):
+            cross[(j, k)] = roots[j] @ inverse_roots[j] @ part(j, k) @ inverse_roots[k] @ roots[k]
+            cross[(k, j)] = cross[(j, k)].T
+    return cross
+
 
 def make_random_costs(
     system: LinearSystem,
     time_domain: str | TimeDomain = "continuous",
     q_i: str = "pd",
-    r_ijj: str = "free",             # Diagonal terms u[j].T R_i,jj u[j]
-    r_ijk: str = "zero",             # Cross terms j≠k u[j].T R_i,jk u[k]
-    enforce_psd_r_i: bool = True,    # Enforce positive semidefiniteness of overall block matrix R_i
+    cross_terms: bool = False,
     sparsity: float = 0.0,
     amplitude: float = 10.0,
     diag: bool = True,
@@ -28,8 +63,10 @@ def make_random_costs(
     seed: int | None = None,
 ) -> list[QuadraticCost]:
     """
-    Generates random quadratic costs for all players in an LQ game.
-    Overall control block matrices R_i are ensured to be positive semidefinite.
+    Generates random quadratic costs for all players in an LQ game. For player i, R_i,ii is
+    positive definite and R_i,jj (j != i) positive semidefinite. With cross terms, R_i = B C B with
+    B = blockdiag(R_i,jj^(1/2)) and C the block correlation matrix of a random Wishart matrix, so R_i
+    is positive semidefinite and has the same diagonal blocks as without them.
 
     Parameters
     ----------
@@ -42,17 +79,8 @@ def make_random_costs(
         Definiteness of the Q_i matrices. Either "pd" for positive definite,
         or "psd" for positive semidefinite.
         "pd" sufficiently ensures that (A, Q_i^{1/2}) is detectable for each player i.
-    r_ijj : str
-        Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
-        "psd" for positive semidefinite, or "free" for arbitrary matrices.
-        Positive semidefiniteness of the overall block matrix R_i is enforced if enforce_psd_r_i is True.
-    r_ijk : str
-        Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
-        or "free" for arbitrary matrices.
-        "free" requires r_ijj in {"free", "psd"} to be valid if enforce_psd_r_i is True.
-        Positive semidefiniteness of the overall block matrix R_i is enforced if enforce_psd_r_i is True.
-    enforce_psd_r_i : bool
-        If True, adjust the generated R_i matrices to ensure they are positive semidefinite.
+    cross_terms : bool
+        Whether R_i has the cross terms R_i,jk (j != k) described above; otherwise they are zero.
     sparsity : float
         Fraction of zero entries to introduce in the cost matrices. Not applied to those defined positive definite.
     amplitude : float
@@ -94,80 +122,16 @@ def make_random_costs(
     else:
         raise ValueError(f"Cost Factory: Unknown value for q_i '{q_i}'. Use 'pd' or 'psd'.")
 
-    # 2. R_i,ii (always PD)
-    Rs_iii = [random_PD_matrix(n=m_i, diag=diag, sparsity=0, amplitude=amplitude, rng=rng) for m_i in ms]
-    Rs = [{(i, i): R_iii} for i, R_iii in enumerate(Rs_iii)]
-
-    # 3. R_i,jj
-    if r_ijj == "zero":
-        # R_i,jj = 0 for j ≠ i
-        pass
-    elif (r_ijj == "psd"):
-        # R_i,jj is PSD for j ≠ i
-        for i in range(N):
-            for j, m_j in enumerate(ms):
-                if j != i:
-                    Rs[i][(j,j)] = random_PSD_matrix(n=m_j, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng)
-    elif r_ijj == "free":
-        # No definiteness constraint on R_i,jj for j ≠ i
-        for i in range(N):
-            for j, m_j in enumerate(ms):
-                if j != i:
-                    Rs[i][(j,j)] = random_symmetric_matrix(n=m_j, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng)
-    else:
-        raise ValueError(f"Cost Factory: Unknown value for r_ijj '{r_ijj}'. Use 'zero', 'psd', or 'free'.")
-    
-    # 4. R_i,jk
-    if r_ijk == "zero":
-        # R_i,jk = 0 for j ≠ k
-        pass
-    elif r_ijk == "free":
-        if r_ijj == "zero" and enforce_psd_r_i:
-            raise ValueError("Cost Factory: r_ijk='free' with r_ijj='zero' and enforce_psd_r_i=True is not valid. The overall block matrix R_i will in general not be positive semidefinite and cannot be adjusted to be so without modifying the zero R_i,jj blocks. Consider setting r_ijj to 'psd' or 'free', or setting enforce_psd_r_i to False.")
-        # No constraint on R_i,jk for j ≠ k
-        for i in range(N):
-            for j in range(N):
-                for k in range(j+1, N):
-                    R_ijk = random_matrix(m=ms[j], n=ms[k], sparsity=sparsity, amplitude=amplitude, rng=rng)
-                    Rs[i][(j,k)] = R_ijk
-                    Rs[i][(k,j)] = R_ijk.T  # Ensure symmetry of overall matrix R_i
-    else:
-        raise ValueError(f"Cost Factory: Unknown value for r_ijk '{r_ijk}'. Use 'zero' or 'free'.")
-    
-    # 5. Check if overall R_i is positive semidefinite
+    # 2. R_i,ii (PD) and R_i,jj for j != i (PSD)
+    Rs = [{(i, i): random_PD_matrix(n=m_i, diag=diag, sparsity=0, amplitude=amplitude, rng=rng)} for i, m_i in enumerate(ms)]
     for i in range(N):
-        # Assemble full R_i matrix
-        R_i = np.zeros((sum(ms), sum(ms)))
-        index_j = 0
-        for j in range(N):
-            index_k = 0
-            for k in range(N):
-                key = (j, k)
-                if key in Rs[i]:
-                    R_block = Rs[i][key]
-                else:
-                    R_block = np.zeros((ms[j], ms[k]))
-                R_i[index_j:index_j+ms[j], index_k:index_k+ms[k]] = R_block
-                index_k += ms[k]
-            index_j += ms[j]
-        # Check definiteness
-        eigvals = np.linalg.eigvalsh(R_i)
-        min_eig = np.min(eigvals)
-        if min_eig < 0:
-            if not enforce_psd_r_i:
-                print(f"Warning: R_{i} is not positive semidefinite (min eigenvalue = {min_eig:.4e}), but enforce_psd_r_i is False, so no adjustment is made.")
-                continue
-            else:
-                if r_ijj == "zero":
-                    raise ValueError(
-                        "Cost Factory: Cannot enforce positive semidefiniteness of R_i with r_ijj='zero' when cross terms are present. We should conceptionally not reach this point as an Exception should have been raised to catch this earlier."
-                    )
-                # Shift to make positive semidefinite
-                shift = (-min_eig + 1e-9)
-                for j in range(N):
-                    key = (j, j)
-                    Rs[i][key] += shift * np.eye(ms[j]) # existence of key of R_i guaranteed by construction
+        for j, m_j in enumerate(ms):
+            if j != i:
+                Rs[i][(j, j)] = random_PSD_matrix(n=m_j, diag=diag, sparsity=sparsity, amplitude=amplitude, rng=rng)
 
-    
-    # 6. Construct QuadraticCost objects
+    # 3. R_i,jk for j != k
+    if cross_terms:
+        for i in range(N):
+            Rs[i].update(_cross_terms([Rs[i][(j, j)] for j in range(N)], rng))
+
     return [QuadraticCost(Q=Qs[i], R=Rs[i]) for i in range(N)]
