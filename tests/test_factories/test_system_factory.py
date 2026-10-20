@@ -45,3 +45,19 @@ def test_target_input_norm() -> None:
     system = make_random_system(n=3, ms=[2, 1], target_input_norm=target, seed=SEED)
     for B in system.Bs:
         assert np.isclose(np.linalg.norm(B, ord=2), target, atol=1e-8)
+
+
+@pytest.mark.parametrize("real_part", [1e-17, -1e-17])
+def test_zero_eigenvalue_counts_as_unstable(real_part: float) -> None:
+    """The computed side of the stability boundary of a zero eigenvalue is rounding."""
+    A = np.diag([real_part, -1.0])
+    assert not is_stabilizable(A, np.array([[0.0], [1.0]]))
+    assert is_stabilizable(A, np.array([[1.0], [0.0]]))
+
+
+def test_sparse_system_controls_its_zero_modes() -> None:
+    """A sparse A is often singular; the inputs must then control its zero modes."""
+    for seed in range(300):
+        system = make_random_system(n=5, ms=[1], sparsity=0.8, seed=seed)
+        if np.linalg.svd(system.A, compute_uv=False)[-1] < 1e-10:
+            assert np.linalg.svd(np.hstack([system.A, system.Bs[0]]), compute_uv=False)[-1] > 1e-10

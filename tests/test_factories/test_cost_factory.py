@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-from src.gamecore.factories import make_random_costs
+from src.gamecore.factories import make_random_costs, make_random_system
 from src.gamecore import QuadraticCost, LinearSystem
 from tests.conftest import SEED
 
@@ -55,3 +55,12 @@ def test_make_random_costs(
     assert len(costs) == system.N
     for cost in costs:
         assert isinstance(cost, QuadraticCost)
+
+
+def test_psd_costs_see_the_zero_modes_of_a_sparse_system() -> None:
+    """Detectability of (A, Q_i) includes the zero modes of a singular A."""
+    for seed in range(300):
+        sparse_system = make_random_system(n=5, ms=[1], sparsity=0.8, seed=seed)
+        if np.linalg.svd(sparse_system.A, compute_uv=False)[-1] < 1e-10:
+            costs = make_random_costs(sparse_system, q_i="psd", sparsity=0.4, seed=seed)
+            assert all(np.linalg.svd(np.vstack([sparse_system.A, cost.Q]), compute_uv=False)[-1] > 1e-10 for cost in costs)

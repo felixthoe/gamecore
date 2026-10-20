@@ -26,9 +26,10 @@ def is_observable(A: np.ndarray, C: np.ndarray) -> bool:
     """Checks observability of (A, C)."""
     return is_controllable(A.T, C.T)
 
-def unstable_eigenvalues(A: np.ndarray, time_domain: str | TimeDomain = "continuous") -> np.ndarray:
+def unstable_eigenvalues(A: np.ndarray, time_domain: str | TimeDomain = "continuous", rtol: float = 1e-8) -> np.ndarray:
     """
-    Eigenvalues of A lying outside the open stable region.
+    Eigenvalues of A outside the open stable region. Eigenvalues within `rtol` ||A||_2 of the
+    stability boundary count as unstable, since their computed side of it is rounding.
 
     Parameters
     ----------
@@ -36,6 +37,8 @@ def unstable_eigenvalues(A: np.ndarray, time_domain: str | TimeDomain = "continu
         System matrix.
     time_domain : str | TimeDomain
         Whether to test eigenvalues against the continuous- or discrete-time stability boundary.
+    rtol : float
+        Tolerance on the stability margin, relative to ||A||_2.
 
     Returns
     -------
@@ -44,12 +47,13 @@ def unstable_eigenvalues(A: np.ndarray, time_domain: str | TimeDomain = "continu
     """
     time_domain = resolve_time_domain(time_domain)
     eigvals = np.linalg.eigvals(A)
-    return eigvals[~time_domain.is_stable_eig(eigvals)]
+    return eigvals[time_domain.stability_margin(eigvals) <= rtol * np.linalg.norm(A, 2)]
 
-def controls_eigenvalue(A: np.ndarray, lam: complex, B: np.ndarray) -> bool:
+def controls_eigenvalue(A: np.ndarray, lam: complex, B: np.ndarray, rtol: float = 1e-8) -> bool:
     """
     Hautus rank test: whether B controls the mode at eigenvalue `lam` of A, i.e. whether
-    rank([A - lam*I, B]) = n. Used instead of the textbook left-eigenvector PBH form (checking
+    rank([A - lam*I, B]) = n, decided by the smallest singular value of this matrix exceeding
+    `rtol` times its largest. Used instead of the textbook left-eigenvector PBH form (checking
     w^T B != 0 for each left eigenvector w of A), which is only equivalent to this for
     non-defective A: for a repeated eigenvalue with a nontrivial Jordan block, `np.linalg.eig`'s
     returned eigenvectors are not a valid basis (numerically ill-conditioned or near-parallel),
@@ -57,7 +61,8 @@ def controls_eigenvalue(A: np.ndarray, lam: complex, B: np.ndarray) -> bool:
     part of that eigenspace.
     """
     n = A.shape[0]
-    return matrix_rank(np.hstack([A - lam * np.eye(n), B])) == n
+    singular_values = np.linalg.svd(np.hstack([A - lam * np.eye(n), B]), compute_uv=False)
+    return bool(singular_values[-1] > rtol * singular_values[0])
 
 def is_stabilizable(A: np.ndarray, B: np.ndarray, time_domain: str | TimeDomain = "continuous") -> bool:
     """Checks stabilizability of (A, B) via the Hautus rank test."""
