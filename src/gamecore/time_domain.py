@@ -44,13 +44,16 @@ class TimeDomain(ABC):
         region (larger means further from the boundary), non-positive on or outside it.
         """
 
-    def is_stable_eig(self, eigs: np.ndarray) -> np.ndarray:
-        """Elementwise predicate: whether each eigenvalue lies in the open stable region."""
-        return self.stability_margin(eigs) > 0
-
     def is_stable(self, eigs: np.ndarray, margin: float = 0.0) -> bool:
         """Whether every eigenvalue in `eigs` lies at least `margin` inside the stable region."""
         return bool(np.all(self.stability_margin(eigs) > margin))
+
+    @abstractmethod
+    def shift_by_margin(self, A: np.ndarray, B: np.ndarray, margin: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Pair (A_s, B_s) for a prescribed degree of stability: A_s - B_s K is stable iff every
+        eigenvalue of A - B K has a stability margin above `margin`.
+        """
 
     @abstractmethod
     def integrate(self, running_values: np.ndarray, dt: np.ndarray) -> float:
@@ -117,6 +120,9 @@ class ContinuousTimeDomain(TimeDomain):
     def stability_margin(self, eigs: np.ndarray) -> np.ndarray:
         return -2*np.real(eigs)
 
+    def shift_by_margin(self, A: np.ndarray, B: np.ndarray, margin: float) -> tuple[np.ndarray, np.ndarray]:
+        return A + 0.5 * margin * np.eye(A.shape[0]), B
+
     def integrate(self, running_values: np.ndarray, dt: np.ndarray) -> float:
         return float(np.sum(running_values * dt))
 
@@ -164,6 +170,10 @@ class DiscreteTimeDomain(TimeDomain):
 
     def stability_margin(self, eigs: np.ndarray) -> np.ndarray:
         return 1.0 - np.abs(eigs)**2
+
+    def shift_by_margin(self, A: np.ndarray, B: np.ndarray, margin: float) -> tuple[np.ndarray, np.ndarray]:
+        scale = np.sqrt(1.0 - margin)
+        return A / scale, B / scale
 
     def integrate(self, running_values: np.ndarray, dt: np.ndarray) -> float:
         return float(np.sum(running_values))

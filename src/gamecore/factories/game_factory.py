@@ -20,9 +20,7 @@ def make_random_lq_game(
     system_target_spectral_radius: float | None = None,
     system_target_input_norm: float | None = None,
     cost_q_i: str = "pd",
-    cost_r_ijj: str = "free",
-    cost_r_ijk: str = "zero",
-    cost_enforce_psd_r_i: bool = True,
+    cost_cross_terms: bool = False,
     cost_sparsity: float = 0.0,
     cost_amplitude: float = 10.0,
     cost_diag: bool = True,
@@ -68,14 +66,8 @@ def make_random_lq_game(
         If given, rescale each B_i so its operator norm equals this value; see `make_random_system`.
     cost_q_i : str
         Definiteness of the Q matrices. Either "pd" (positive definite) or "psd" (positive semi-definite).
-    cost_r_ijj : str
-        Constraints on the R_i,jj matrices for j ≠ i. Either "zero" for zero matrices,
-        "psd" for positive semidefinite, or "free" for arbitrary matrices.
-    cost_r_ijk : str
-        Constraints on the R_i,jk matrices for j ≠ k. Either "zero" for zero matrices,
-        or "free" for arbitrary matrices.
-    cost_enforce_psd_r_i : bool
-        If True, adjust the generated R_i matrices to ensure they are positive semidefinite.
+    cost_cross_terms : bool
+        Whether the control cost matrices R_i have cross terms R_i,jk (j != k); see `make_random_costs`.
     cost_sparsity: float
         Fraction of zero entries to introduce in the cost matrices. Not applied to those defined positive definite.
     cost_amplitude: float
@@ -124,9 +116,7 @@ def make_random_lq_game(
         time_domain=time_domain,
         learning_rate=learning_rate,
         cost_q_i=cost_q_i,
-        cost_r_ijj=cost_r_ijj,
-        cost_r_ijk=cost_r_ijk,
-        cost_enforce_psd_r_i=cost_enforce_psd_r_i,
+        cost_cross_terms=cost_cross_terms,
         cost_sparsity=cost_sparsity,
         cost_amplitude=cost_amplitude,
         cost_diag=cost_diag,

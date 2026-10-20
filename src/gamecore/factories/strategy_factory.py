@@ -61,17 +61,19 @@ def make_lqr_strategy(
     return LinearStrategy(K=K)
 
 
-def _joint_lqr_gains(system: LinearSystem, time_domain: TimeDomain, amplitude: float) -> list[np.ndarray]:
+def _joint_lqr_gains(system: LinearSystem, time_domain: TimeDomain, amplitude: float, margin: float) -> list[np.ndarray]:
     """
-    Stacks all players into one super-player and solves a single Riccati equation for the joint
-    system with a fixed (I, I) dummy cost, splitting the resulting gain by each player's ms[i].
-    Deterministic, O(1), and guaranteed stabilizing whenever (A, B_total) is stabilizable.
+    Stacks all players into one super-player and solves a single Riccati equation with a fixed
+    (amplitude I, I) dummy cost, splitting the resulting gain by each player's ms[i]. The equation
+    is solved for the joint system shifted by `margin` (`TimeDomain.shift_by_margin`), so the
+    closed loop gets a stability margin above `margin` whenever every mode of A within `margin`
+    of the stability boundary or outside it is controllable. Deterministic and O(1).
     """
-    B_total = np.hstack(system.Bs)
+    A, B_total = time_domain.shift_by_margin(system.A, np.hstack(system.Bs), margin)
     Q_dummy = amplitude * np.eye(system.n)
     R_dummy = np.eye(B_total.shape[1])
-    P = time_domain.solve_riccati(system.A, B_total, Q_dummy, R_dummy)
-    K_total = time_domain.gain_from_riccati(system.A, B_total, R_dummy, P)
+    P = time_domain.solve_riccati(A, B_total, Q_dummy, R_dummy)
+    K_total = time_domain.gain_from_riccati(A, B_total, R_dummy, P)
     offsets = np.cumsum([0] + system.ms)
     return [K_total[offsets[i]:offsets[i + 1]] for i in range(system.N)]
 
@@ -219,7 +221,8 @@ def make_random_strategies(
     strategy_init : {"joint_lqr", "random_pole_placement", "random_bisection"}
         How to generate the initial gains:
           - "joint_lqr": deterministic, near-optimal. Stacks all players into one super-player
-            and solves a single Riccati equation with a fixed dummy cost.
+            and solves a single Riccati equation with a fixed dummy cost and prescribed
+            stability margin.
           - "random_pole_placement": realizes a random target spectrum for the controllable part
             of the closed loop via centralized pole placement.
           - "random_bisection": one random direction per player, scaled up to just inside the
@@ -231,12 +234,11 @@ def make_random_strategies(
     bisection_scale : float
         Search-direction scale, used by "random_bisection".
     margin : float
-        Minimum required `TimeDomain.stability_margin` of the placed (resp. bisected) closed loop,
-        used by "random_pole_placement" and "random_bisection" (ignored by "joint_lqr", whose
-        Riccati solution is generically well inside the stable region already).
+        Minimum required `TimeDomain.stability_margin` of the closed loop under the returned
+        gains, for every method.
     max_gain_norm : float
-        Upper bound on the Frobenius norm of the stacked gain, used by "random_pole_placement"
-        and "random_bisection"; larger samples are rejected and resampled.
+        Upper bound on the Frobenius norm of the stacked gain. "random_pole_placement" and
+        "random_bisection" resample larger gains, "joint_lqr" raises.
     seed : int, optional
         Random seed for reproducibility.
 
@@ -253,9 +255,11 @@ def make_random_strategies(
 
     if strategy_init == "joint_lqr":
         try:
-            Ks = _joint_lqr_gains(system, time_domain, amplitude)
+            Ks = _joint_lqr_gains(system, time_domain, amplitude, margin)
         except np.linalg.LinAlgError as e:
             raise FactorySamplingError(f"Strategy Factory: joint_lqr Riccati solve failed on a near-critical system: {e}") from e
+        if np.linalg.norm(np.vstack(Ks)) > max_gain_norm:
+            raise FactorySamplingError(f"Strategy Factory: joint_lqr gain has a norm above {max_gain_norm}.")
     elif strategy_init == "random_pole_placement":
         Ks = _random_pole_placement_gains(system, time_domain, rng, pole_scale, margin, max_gain_norm)
     elif strategy_init == "random_bisection":
@@ -263,4 +267,8 @@ def make_random_strategies(
     else:
         raise ValueError(f"Strategy Factory: unknown strategy_init '{strategy_init}'.")
 
-    return [LinearStrategy(K) for K in Ks]
+    strategies = [LinearStrategy(K) for K in Ks]
+    # includes the uncontrollable modes, which no gain moves
+    if not time_domain.is_stable(np.linalg.eigvals(system.A_cl(strategies)), margin=margin):
+        raise FactorySamplingError(f"Strategy Factory: {strategy_init} gains leave a stability margin of at most {margin}.")
+    return strategies

@@ -3,8 +3,8 @@
 import pytest
 import numpy as np
 
-from src.gamecore.factories import make_lqr_strategy, make_random_strategies, make_random_costs
-from src.gamecore import LinearSystem, LinearStrategy
+from src.gamecore.factories import make_lqr_strategy, make_random_strategies, make_random_costs, make_random_system
+from src.gamecore import FactorySamplingError, LinearSystem, LinearStrategy
 from tests.conftest import SEED
 
 
@@ -102,3 +102,30 @@ def test_random_bisection_is_not_near_optimal(differential_system: LinearSystem)
     good_norm = np.concatenate([s.K.flatten() for s in good])
     bad_norm = np.concatenate([s.K.flatten() for s in bad])
     assert not np.allclose(good_norm, bad_norm, rtol=0.5)
+
+
+@pytest.mark.parametrize("strategy_init", ["joint_lqr", "random_pole_placement", "random_bisection"])
+def test_uncontrollable_mode_within_the_margin_is_rejected(strategy_init: str) -> None:
+    """No gain moves the uncontrollable third state, whose stability margin 0.02 is below the required 0.05."""
+    A = np.array([[0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 0.0, -0.01]])
+    system = LinearSystem(A=A, Bs=[np.array([[0.0], [1.0], [0.0]]), np.array([[1.0], [1.0], [0.0]])])
+    with pytest.raises(FactorySamplingError):
+        make_random_strategies(system=system, strategy_init=strategy_init, seed=SEED)
+
+
+def test_joint_lqr_gain_norm_is_bounded() -> None:
+    """The weakly controllable unstable mode needs a joint LQR gain of about 2e4."""
+    system = LinearSystem(A=np.diag([1.0, -1.0]), Bs=[np.array([[1e-4], [1.0]])])
+    with pytest.raises(FactorySamplingError):
+        make_random_strategies(system=system, strategy_init="joint_lqr", seed=SEED)
+
+
+def test_joint_lqr_meets_the_margin_on_sparse_systems() -> None:
+    """Sparse systems have slow modes that a joint LQR without prescribed margin leaves near the stability boundary."""
+    for seed in range(50):
+        system = make_random_system(n=5, ms=[1, 1], sparsity=0.8, seed=seed)
+        try:
+            strategies = make_random_strategies(system=system, strategy_init="joint_lqr", seed=seed)
+        except FactorySamplingError:
+            continue
+        assert np.min(-2 * np.real(np.linalg.eigvals(system.A_cl(strategies)))) > 0.05

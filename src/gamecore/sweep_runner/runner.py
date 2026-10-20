@@ -58,8 +58,9 @@ class SweepRunner(ABC):
         Dictionary with parameter names as keys and lists of values.
     run_trial_fn : callable
         A function that runs a single trial. Must accept parameters:
-        (seed: int, sweep_params: dict, **kwargs) -> str
-        and return a string indicating the outcome of the trial.
+        (seed: int, sweep_params: dict) -> tuple[str, dict]
+        and return the outcome of the trial and a JSON-serializable dict of numbers, which is
+        stored with the trial in `result.json` under "info".
     n_trials : int, default=100
         Number of trials to run for each parameter configuration.
     is_valid_sweep_fn : callable, default=None
@@ -83,7 +84,8 @@ class SweepRunner(ABC):
         "exception" and not retried, so it cannot silently bias the sampled trials. Retry seeds
         depend only on the seed group, so sweeps synced by `seed_sync_by` retry with the same seed.
     max_retries_on_exception : int, default=10
-        Maximum number of attempts for a trial if retryable exceptions occur.
+        Maximum number of attempts for a trial if retryable exceptions occur. A trial whose
+        attempts all raise one is recorded as outcome "retries_exhausted".
     """
 
     INTERIM_AGGREGATION_INTERVAL = 30.0  # seconds between rewrites of the interim result files
@@ -120,7 +122,6 @@ class SweepRunner(ABC):
         self.all_stats = {}
         self.all_failures = {}
         self.total_sweeps = 0
-        self.trial_kwargs = {}
         self.max_workers = max_workers or (multiprocessing.cpu_count() - 1)
         self.retry_on_exception = retry_on_exception
         self.max_retries_on_exception = max_retries_on_exception
@@ -134,14 +135,9 @@ class SweepRunner(ABC):
         """
         return logging.getLogger(LOGGER_NAME)
 
-    def run(self, **trial_kwargs):
+    def run(self):
         """
         Run the full parameter sweep.
-
-        Parameters
-        ----------
-        trial_kwargs : dict
-            Additional keyword arguments forwarded to `run_trial_fn`.
         """
         mode = self._prepare_experiment_directory()
         if mode == "abort":
@@ -163,7 +159,6 @@ class SweepRunner(ABC):
         )
         sweep_args = self._create_sweep_args()
         self.seed_registry.save()
-        self.trial_kwargs = trial_kwargs
         self.all_stats = {}
         self.all_failures = {}
 
@@ -469,9 +464,9 @@ class SweepRunner(ABC):
             seed = sweep_seed + trial_idx
             attempts = self.max_retries_on_exception
 
-            outcome, duration, exception_info = None, None, None
+            outcome, info, duration, exception_info = None, None, None, None
             for attempt in range(attempts):
-                outcome, duration, exception_info = self._run_single_trial(seed, sweep_params)
+                outcome, info, duration, exception_info = self._run_single_trial(seed, sweep_params)
                 if outcome != "exception":
                     break
                 if not exception_info["retryable"]:
@@ -505,6 +500,7 @@ class SweepRunner(ABC):
                     )
                     seed = self.seed_registry.retry_seed(seed_key, trial_idx, attempt)
                 else:
+                    outcome = "retries_exhausted"
                     if not self.parallel:
                         print(f"❌ Max retries reached for sweep {sweep_idx+1}, trial {trial_idx+1}. "
                               f"Logging exception and moving on.")
@@ -518,7 +514,7 @@ class SweepRunner(ABC):
 
             sweep_stats[outcome] = sweep_stats.get(outcome, 0) + 1
 
-            entry = {"trial": trial_idx, "seed": seed, "outcome": outcome, "duration": duration}
+            entry = {"trial": trial_idx, "seed": seed, "outcome": outcome, "duration": duration, "info": info}
             if exception_info:
                 entry.update(exception_info)
             trial_outcomes.append(entry)
@@ -536,15 +532,15 @@ class SweepRunner(ABC):
         Returns
         -------
         tuple
-            (outcome, duration, exception_info).
+            (outcome, info, duration, exception_info).
         """
         try:
             start_time = time.perf_counter()
-            outcome = self.run_trial_fn(seed, sweep_params, **self.trial_kwargs)
+            outcome, info = self.run_trial_fn(seed, sweep_params)
             duration = (time.perf_counter() - start_time) / 1e-3  # milliseconds
-            return outcome, duration, None
+            return outcome, info, duration, None
         except Exception as e:
-            return "exception", None, {
+            return "exception", None, None, {
                 "exception": str(e),
                 "traceback": traceback.format_exc(),
                 "retryable": isinstance(e, self.retry_on_exception),
@@ -665,7 +661,6 @@ class SweepRunner(ABC):
             "timestamp": datetime.now().isoformat(),
             "seed_sync_by": self.seed_sync_by,
             "sweep_space": self.sweep_space.to_dict(),
-            "trial_kwargs": self.trial_kwargs,
         })
 
         suffix = "" if final else "_interim"

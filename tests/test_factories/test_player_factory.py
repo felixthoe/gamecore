@@ -35,21 +35,14 @@ def dynamic_system() -> LinearSystem:
 
 @pytest.mark.parametrize("time_domain", ["continuous", "discrete"])
 @pytest.mark.parametrize("q_i", ["pd", "psd"])
-@pytest.mark.parametrize("r_ijj", ["zero", "psd", "free"])
-@pytest.mark.parametrize("r_ijk", ["zero", "free"])
-@pytest.mark.parametrize("enforce_psd_r_i", [True, False])
+@pytest.mark.parametrize("cross_terms", [False, True])
 def test_make_random_lq_players(
     differential_system: LinearSystem,
     dynamic_system: LinearSystem,
     time_domain: str,
     q_i: str,
-    r_ijj: str,
-    r_ijk: str,
-    enforce_psd_r_i: bool,
+    cross_terms: bool,
 ) -> None:
-    # exclude invalid combinations
-    if r_ijk == "free" and r_ijj == "zero" and enforce_psd_r_i:
-        pytest.skip("Invalid combination of r_ijj, r_ijk, and enforce_psd_r_i")
     if time_domain == "continuous":
         system = differential_system
     else:
@@ -58,9 +51,7 @@ def test_make_random_lq_players(
         time_domain=time_domain,
         system=system,
         cost_q_i=q_i,
-        cost_r_ijj=r_ijj,
-        cost_r_ijk=r_ijk,
-        cost_enforce_psd_r_i=enforce_psd_r_i,
+        cost_cross_terms=cross_terms,
         seed=SEED,
     )
     assert isinstance(players, list)

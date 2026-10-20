@@ -15,17 +15,17 @@ from src.gamecore.sweep_runner.sweep_space import SweepSpace
 #############################
 
 # top level as it needs to be pickleable for parallel execution
-def dummy_run_trial_fn(seed: int, sweep_params: dict, **kwargs) -> str:
+def dummy_run_trial_fn(seed: int, sweep_params: dict) -> tuple[str, dict]:
     if sweep_params["param_a"] == "fail":
         raise RuntimeError("Deliberate failure")
-    return "success"
+    return "success", {"seed_parity": seed % 2}
 
 
-def primary_seed_fails_trial_fn(seed: int, sweep_params: dict, **kwargs) -> str:
+def primary_seed_fails_trial_fn(seed: int, sweep_params: dict) -> tuple[str, dict]:
     # primary seeds lie below 2**31, retry seeds above
     if seed < 2**31:
         raise RuntimeError("Deliberate failure on the primary seed")
-    return f"seed={seed}"
+    return f"seed={seed}", {}
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ def _result_files(exp_dir):
 @pytest.mark.parametrize("parallel", [True, False])
 def test_sweep_execution_and_logging(sweep_runner: SweepRunner, parallel: bool):
     sweep_runner.parallel = parallel
-    sweep_runner.run(dummy_kwarg="test")
+    sweep_runner.run()
 
     exp_dir = sweep_runner.experiment_logger.dir
     assert os.path.exists(exp_dir)
@@ -100,21 +100,29 @@ def test_result_aggregation(sweep_runner: SweepRunner):
     assert any(count > 0 for count in aggregated["stats_abs"].values())
 
 
-def test_exception_handling(sweep_runner: SweepRunner):
+def test_exhausted_retries_have_their_own_outcome(sweep_runner: SweepRunner):
+    """The "fail" sweeps raise a retryable exception in every attempt."""
     sweep_runner.run()
 
-    has_exception = False
     for path in _result_files(sweep_runner.experiment_logger.dir):
         with open(path, "r") as f:
             res = json.load(f)
-        for entry in res.get("trial_outcomes", []):
-            if entry.get("outcome") == "exception":
-                has_exception = True
-                break
-        if has_exception:
-            break
+        with open(os.path.join(os.path.dirname(path), "params.json"), "r") as f:
+            params = json.load(f)
+        expected = "retries_exhausted" if params["param_a"] == "fail" else "success"
+        assert all(entry["outcome"] == expected for entry in res["trial_outcomes"])
 
-    assert has_exception, "Expected at least one trial with an 'exception' outcome"
+
+def test_trial_info_is_stored(sweep_runner: SweepRunner):
+    """Successful trials keep the numbers returned by `run_trial_fn`, failed ones None."""
+    sweep_runner.run()
+
+    for path in _result_files(sweep_runner.experiment_logger.dir):
+        with open(path, "r") as f:
+            res = json.load(f)
+        for entry in res["trial_outcomes"]:
+            expected = {"seed_parity": entry["seed"] % 2} if entry["outcome"] == "success" else None
+            assert entry["info"] == expected
 
 
 def test_exception_detail_and_failures_report(sweep_runner: SweepRunner):
