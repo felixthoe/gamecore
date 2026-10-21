@@ -3,13 +3,11 @@
 from abc import ABC, abstractmethod
 
 from ..strategy.base_strategy import BaseStrategy
-from ..strategy.linear_strategy import LinearStrategy
 from ..cost.base_cost import BaseCost
-from ..cost.quadratic_cost import QuadraticCost
 from ..system_trajectory import SystemTrajectory
 from ..time_domain import TimeDomain
-from ..utils.logger import DataLogger
-from ..system.linear_system import LinearSystem
+from ..utils.logger import DataLogger, subclass_by_name
+from ..system.base_system import BaseSystem
 
 class BasePlayer(ABC):
     """
@@ -34,7 +32,7 @@ class BasePlayer(ABC):
         self.learning_rate = float(learning_rate)
 
     @abstractmethod
-    def strategy_cost(self, strategies: list[BaseStrategy], system: LinearSystem, time_domain: str | TimeDomain = "continuous") -> float:
+    def strategy_cost(self, strategies: list[BaseStrategy], system: BaseSystem, time_domain: str | TimeDomain = "continuous") -> float:
         """
         Evaluate the player's cost given a set of strategies and system.
 
@@ -42,8 +40,8 @@ class BasePlayer(ABC):
         ----------
         strategies : list of BaseStrategy
             List of strategies for all players in the game.
-        system : LinearSystem
-            The linear system shared by all players.
+        system : BaseSystem
+            The system shared by all players.
         time_domain : str | TimeDomain
             Whether the game evolves in continuous or discrete time.
 
@@ -114,24 +112,16 @@ class BasePlayer(ABC):
     @classmethod
     def load(cls, logger: DataLogger, prefix: str = "") -> "BasePlayer":
         """
-        Load a player from a logger based on saved metadata.
+        Load a player from a logger based on saved metadata, with strategy and cost as instances
+        of their logged classes (see `subclass_by_name`).
         """
-        strategy_class_dict = {
-            "LinearStrategy": LinearStrategy,
-            # Add other strategy types here if needed
-        }
-        cost_class_dict = {
-            "QuadraticCost": QuadraticCost,
-            # Add other cost types here if needed
-        }
-
         player_idx = logger.load_metadata_entry(f"{prefix}player_idx")
         learning_rate = logger.load_metadata_entry(f"{prefix}learning_rate")
-        
-        strategy_class_str = logger.load_metadata_entry(f"{prefix}strategy_type")
-        strategy = strategy_class_dict[strategy_class_str].load(logger, prefix=f"{prefix}strategy_")
 
-        cost_class_str = logger.load_metadata_entry(f"{prefix}cost_type")
-        cost = cost_class_dict[cost_class_str].load(logger, prefix=f"{prefix}cost_")
+        strategy_class = subclass_by_name(BaseStrategy, logger.load_metadata_entry(f"{prefix}strategy_type"))
+        strategy = strategy_class.load(logger, prefix=f"{prefix}strategy_")
+
+        cost_class = subclass_by_name(BaseCost, logger.load_metadata_entry(f"{prefix}cost_type"))
+        cost = cost_class.load(logger, prefix=f"{prefix}cost_")
 
         return cls(strategy, cost, player_idx, learning_rate=learning_rate)

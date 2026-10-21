@@ -9,7 +9,7 @@ from ..player.base_player import BasePlayer
 from ..strategy.base_strategy import BaseStrategy
 from ..system_trajectory import SystemTrajectory
 from ..time_domain import TimeDomain, resolve_time_domain
-from ..utils.logger import DataLogger
+from ..utils.logger import DataLogger, subclass_by_name
 
 class BaseGame(ABC):
     """
@@ -221,43 +221,31 @@ class BaseGame(ABC):
 
     @classmethod
     def load(cls, logger: DataLogger, prefix: str = "") -> "BaseGame":
-        # avoid circular import by imports here
-        from ..system.linear_system import LinearSystem
-        from ..player.lq_player import LQPlayer
-        from ..game.lq_game import LQGame
+        """
+        Load a game logged by `log`. Game, system, players, strategies and costs are instances of
+        their logged classes (see `subclass_by_name`). Subclasses with further parameters override
+        `load` and build themselves from `_load_components`.
 
-        system_class_dict = {
-            "LinearSystem": LinearSystem,
-            # Add other system types here if needed
-        }
-        player_class_dict = {
-            "LQPlayer": LQPlayer,
-            # Add other player types here if needed
-        }
-        game_class_dict = {
-            "BaseGame": BaseGame,
-            "LQGame": LQGame,
-            # Add other game types here if needed
-        }
+        Args:
+            logger (DataLogger): Logger instance.
+            prefix (str): Optional prefix for keys.
 
-        game_class_str = logger.load_metadata_entry(f"{prefix}type")
-        game_class = game_class_dict.get(game_class_str)
-        if game_class is None:
-            raise ValueError(f"Unknown game type: {game_class_str}")
+        Returns:
+            BaseGame: Loaded game instance.
+        """
+        game_class = subclass_by_name(BaseGame, logger.load_metadata_entry(f"{prefix}type"))
+        if game_class is not cls:
+            return game_class.load(logger, prefix)
+        system, players, time_domain = cls._load_components(logger, prefix)
+        return cls(system, players, time_domain=time_domain)
 
-        N = logger.load_metadata_entry(f"{prefix}N")
-        time_domain = logger.load_metadata_entry(f"{prefix}time_domain")
-
-        system_class_str = logger.load_metadata_entry(f"{prefix}system_type")
-        system = system_class_dict[system_class_str].load(logger, prefix=f"{prefix}system_")
-        Sigma0 = logger.load_array(f"{prefix}Sigma0")
-
+    @staticmethod
+    def _load_components(logger: DataLogger, prefix: str = "") -> tuple[BaseSystem, list[BasePlayer], str]:
+        """System, players and time domain of a logged game."""
+        system_class = subclass_by_name(BaseSystem, logger.load_metadata_entry(f"{prefix}system_type"))
+        system = system_class.load(logger, prefix=f"{prefix}system_")
         players = []
-        for i in range(N):
-            player_class_str = logger.load_metadata_entry(f"{prefix}player{i}_type")
-            players.append(player_class_dict[player_class_str].load(logger, prefix=f"{prefix}player{i}_"))
-
-        if game_class is LQGame:
-            return game_class(system, players, time_domain=time_domain, Sigma0=Sigma0)
-        else:
-            return game_class(system, players, time_domain=time_domain)
+        for i in range(logger.load_metadata_entry(f"{prefix}N")):
+            player_class = subclass_by_name(BasePlayer, logger.load_metadata_entry(f"{prefix}player{i}_type"))
+            players.append(player_class.load(logger, prefix=f"{prefix}player{i}_"))
+        return system, players, logger.load_metadata_entry(f"{prefix}time_domain")

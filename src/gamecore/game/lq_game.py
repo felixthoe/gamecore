@@ -265,3 +265,18 @@ class LQGame(BaseGame):
         """
         super().log(logger, prefix)
         logger.log_array(f"{prefix}Sigma0", self.Sigma0)
+
+    @classmethod
+    def load(cls, logger: DataLogger, prefix: str = "") -> "LQGame":
+        """
+        Load an LQGame logged by `log`.
+
+        Args:
+            logger (DataLogger): Logger instance.
+            prefix (str): Optional prefix for keys.
+
+        Returns:
+            LQGame: Loaded game instance.
+        """
+        system, players, time_domain = cls._load_components(logger, prefix)
+        return cls(system, players, time_domain=time_domain, Sigma0=logger.load_array(f"{prefix}Sigma0"))

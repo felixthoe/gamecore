@@ -5,7 +5,7 @@ import pytest
 
 from src.gamecore import (
     LQGame, SystemTrajectory, LinearStrategy, DataLogger,
-    LinearSystem, QuadraticCost, LQPlayer, BaseGame
+    LinearSystem, QuadraticCost, LQPlayer, BaseGame, BasePlayer
 )
 
 
@@ -277,3 +277,42 @@ def test_log_and_load_round_trip(temp_logger: DataLogger, lqgame: LQGame):
         assert np.allclose(rp.cost.Q, lp.cost.Q)
         for j in lp.cost.R:
             assert np.allclose(rp.cost.R[j], lp.cost.R[j])
+
+
+class OwnSystem(LinearSystem):
+    pass
+
+class OwnStrategy(LinearStrategy):
+    pass
+
+class OwnCost(QuadraticCost):
+    pass
+
+class OwnPlayer(BasePlayer):
+    def strategy_cost(self, strategies, system, time_domain="continuous"):
+        return 0.0
+
+    def system_trajectory_cost(self, trajectory, time_domain="continuous", *args, **kwargs):
+        return 0.0
+
+class OwnGame(BaseGame):
+    pass
+
+def test_load_resolves_classes_defined_outside_gamecore(temp_logger: DataLogger, lqgame: LQGame):
+    """BaseGame.load returns the logged classes, also subclasses defined elsewhere, and loads
+    games without Sigma0."""
+    players = [OwnPlayer(OwnStrategy(p.strategy.K), OwnCost(Q=p.cost.Q, R=p.cost.R), p.player_idx) for p in lqgame.players]
+    game = OwnGame(OwnSystem(A=lqgame.system.A, Bs=lqgame.system.Bs), players)
+    game.log(temp_logger, prefix="game_")
+    restored = BaseGame.load(temp_logger, prefix="game_")
+    assert type(restored) is OwnGame
+    assert type(restored.system) is OwnSystem
+    for rp, p in zip(restored.players, players):
+        assert (type(rp), type(rp.strategy), type(rp.cost)) == (OwnPlayer, OwnStrategy, OwnCost)
+        assert np.allclose(rp.strategy.K, p.strategy.K)
+
+def test_load_rejects_unknown_class_names(temp_logger: DataLogger, lqgame: LQGame):
+    lqgame.log(temp_logger, prefix="game_")
+    temp_logger.log_metadata({"game_system_type": "UnknownSystem"})
+    with pytest.raises(ValueError):
+        BaseGame.load(temp_logger, prefix="game_")
