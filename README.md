@@ -13,7 +13,7 @@ pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git"
 ```
 Or, install a specific released version with, e.g.:
 ```bash
-pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.1.4"
+pip install "gamecore @ git+https://github.com/felixthoe/gamecore.git@v0.4.1"
 ```
 We recommend to always use a tagged version for reproducibility.
 
@@ -33,11 +33,10 @@ The `gamecore` package provides the following conceptual building blocks:
 ```text
 gamecore
 ├── Game abstraction
-│   ├── BaseGame                    # Holds BaseSystem and BasePlayer[]
-│   ├── BaseSystem                  # Defines the ODEs / system dynamics
+│   ├── BaseGame                    # Holds BaseSystem and BasePlayer[], simulates the closed loop
+│   ├── BaseSystem                  # System dynamics f(x, u_1, ..., u_N): dx/dt or next state
 │   ├── BasePlayer                  # Holds a strategy and a cost function
-│   ├── BaseStrategy                # Abstract interface for control laws
-│   ├── BaseStrategyTrajectory      # Tracking and reconstruction of learned BaseStrategies and costs
+│   ├── BaseStrategy                # Abstract interface for control laws with a flat parameter vector
 │   └── BaseCost                    # Abstract interface for cost functions
 │
 ├── Linear-Quadratic specialization
@@ -45,19 +44,22 @@ gamecore
 │   ├── LinearSystem                # Linear version of BaseSystem
 │   ├── LQPlayer                    # Player with LinearStrategy and QuadraticCost
 │   ├── LinearStrategy              # Implements u = -Kx
-│   ├── LinearStrategyTrajectory    # Specialization with LinearStrategy
-│   └── QuadraticCost               # Implements integral of xᵀQx + uᵀRu
+│   └── QuadraticCost               # Implements integral (or sum) of xᵀQx + Σ_jk u_jᵀR_jk u_k
 │
+├── TimeDomain                      # Continuous or discrete time: stability, Lyapunov and Riccati equations
 ├── SystemTrajectory                # Container for time-state-control trajectories
 │
+├── Factories                       # Random LQ systems, costs, strategies, players and games
+│                                   # (make_random_lq_game), FactorySamplingError
 ├── Solvers
 │   ├── solver                      # iterative equilibrium solvers
 │   └── groebner                    # symbolic equilibrium computation for small systems
 │
 └── Utilities
     ├── SweepRunner                 # Helper for large-scale parallelized simulations
-    └── Logger                      # Data-Logging
+    └── DataLogger                  # Data-Logging
 ```
+Other games, e.g. nonlinear ones, can subclass the base classes and implement their own specialization.
 
 ## Repository Structure and Mirroring
 
@@ -77,10 +79,10 @@ should follow the workflow described below.
 ### 1. Cloning the Repository
 
 Development takes place in the internal repository. 
-To work on `gamecore`, first clone the internal repository locally (requires access and confidentials):
+To work on `gamecore`, first clone the internal repository locally (requires access and credentials):
 
 ```bash
-git clone git@gitlab.kit.edu/kit/irs/rus/ks/gamecore.git
+git clone git@gitlab.kit.edu:kit/irs/rus/ks/gamecore.git
 cd gamecore
 ```
 The public repository is a mirror and should not be used for development.
@@ -116,7 +118,7 @@ We follow a semantic versioning scheme:
 - MINOR (0.x.0) — new features, backwards compatible
 - MAJOR (x.0.0) — breaking API changes
 
-Create a new version based on the udpated main with:
+Create a new version based on the updated main with:
 ```bash
 git checkout main
 git pull
