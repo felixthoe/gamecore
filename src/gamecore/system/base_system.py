@@ -4,7 +4,6 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 from ..utils.logger import DataLogger
-from ..strategy.linear_strategy import LinearStrategy
 
 class BaseSystem(ABC):
     """

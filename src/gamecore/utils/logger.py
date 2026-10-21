@@ -153,3 +153,31 @@ class DataLogger:
 
     def summarize(self):
         print(f"Experiment saved to: {self.dir}")
+
+
+def subclass_by_name(base: type, name: str) -> type:
+    """
+    The class named `name` among `base` and its subclasses, e.g. the class of a logged object from
+    its "type" entry. Subclasses defined outside gamecore count once their module is imported.
+
+    Parameters
+    ----------
+    base : type
+        Class whose subclasses are searched, including itself.
+    name : str
+        Class name.
+
+    Returns
+    -------
+    type
+        The unique class of that name.
+    """
+    classes, found = [base], set()
+    while classes:
+        cls = classes.pop()
+        if cls.__name__ == name:
+            found.add(cls)
+        classes.extend(cls.__subclasses__())
+    if len(found) != 1:
+        raise ValueError(f"Expected one imported subclass of {base.__name__} named {name!r}, found {len(found)}.")
+    return found.pop()
